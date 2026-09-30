@@ -841,7 +841,7 @@ func get_state() -> Dictionary:
 			"expr": String(entry["expr"]),
 			"at": String(entry["at"]),
 		})
-	return {"bg": _bg_id, "cg": _cg_id, "chars": chars}
+	return {"bg": _bg_id, "cg": _cg_id, "chars": chars, "weather": _weather_id}
 
 
 func restore_state(data: Dictionary) -> void:
@@ -860,6 +860,11 @@ func restore_state(data: Dictionary) -> void:
 			String((item as Dictionary).get("expr", "normal")),
 			String((item as Dictionary).get("at", "center")),
 			"none", 0.0)
+	# 天气：clear() 会先把它关掉，这里再按存档还原。
+	# 老存档没有这个字段 → 空串 → 保持无天气；强度不存，回滚不追求逐帧一致。
+	var weather := String(data.get("weather", ""))
+	if not weather.is_empty():
+		set_weather(weather, 1.0)
 
 
 # ---------------------------------------------------------------------------

@@ -35,6 +35,12 @@ var _tab_idle: StyleBoxFlat
 func _ready() -> void:
 	visible = false
 
+	# CG 网格里装的是 CG 标题 / 提示这类「内容」，不是界面文案 ——
+	# 它们的多语言由剧本和注册表负责，不该被界面翻译表按原文去查
+	_cg_grid.set_meta(I18n.META_SKIP, true)
+	# 进度文字每帧都在变（含数字），只能走代码里的显式翻译
+	_progress.set_meta(I18n.META_SKIP, true)
+
 	var font_size := GalleryTheme.count("button_font_size", 22)
 	_title.add_theme_font_size_override("font_size", GalleryTheme.count("title_font_size", 34))
 	_title.add_theme_color_override("font_color", GalleryTheme.color("text"))
@@ -252,7 +258,7 @@ func _update_progress() -> void:
 	var key := "progress_label" if _current_tab == TAB_CG else "music_progress_label"
 	var prefix := GalleryTheme.label(key, "收集进度")
 	var progress := CollectionManager.get_progress(_current_tab)
-	_progress.text = "%s   %d / %d" % [prefix, progress.x, progress.y]
+	_progress.text = "%s   %d / %d" % [I18n.t(prefix), progress.x, progress.y]
 
 
 static func _fill(node: Control) -> void:

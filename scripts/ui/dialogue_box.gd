@@ -69,7 +69,7 @@ func _ready() -> void:
 	# 名字牌做成可点的 —— 点一下重播这一句的语音。
 	# 必须吃掉点击事件，否则会顺着 _unhandled_input 把对白推进下去。
 	_name_plate.mouse_filter = Control.MOUSE_FILTER_STOP
-	_name_plate.tooltip_text = "点击重播语音"
+	_name_plate.tooltip_text = I18n.t("点击重播语音")
 	_name_plate.gui_input.connect(_on_name_plate_input)
 
 	_stop_indicator()
@@ -100,7 +100,9 @@ func _process(_delta: float) -> void:
 # 对外接口
 # ---------------------------------------------------------------------------
 
-func show_line(speaker: String, text: String) -> void:
+## already_read 由调用方传入，而不是这里自己查 ReadTracker ——
+## _on_say 在显示之前就把它标记成已读，这里再查永远是「已读」。
+func show_line(speaker: String, text: String, already_read: bool = false) -> void:
 	visible = true
 	_full_text = text
 
@@ -109,6 +111,12 @@ func show_line(speaker: String, text: String) -> void:
 	else:
 		_name_plate.visible = true
 		_name_label.text = speaker
+
+	# 已读文本变暗：只改**默认字色**，不去给文本包一层 [color] ——
+	# 包起来会跟剧本里已有的颜色标记、自定义特效打架。
+	var dim := already_read and bool(ConfigManager.get_value("dim_read_text", false))
+	_text_label.add_theme_color_override(
+		"default_color", UiTheme.TEXT_DIM if dim else UiTheme.TEXT)
 
 	# 先把节奏标记编译成时间轴，再交给 RichTextLabel 渲染。
 	# 顺序很重要：display 里已经剥掉了 [wait=] / [speed=]，

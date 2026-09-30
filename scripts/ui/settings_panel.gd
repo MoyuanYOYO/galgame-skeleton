@@ -18,6 +18,8 @@ const SLIDERS: Array = [
 const TOGGLES: Array = [
 	{"key": "fullscreen", "label": "全屏显示"},
 	{"key": "skip_unread", "label": "允许跳过未读文本"},
+	{"key": "dim_read_text", "label": "已读文本变暗"},
+	{"key": "rollback_wheel", "label": "滚轮用于回滚剧情"},
 ]
 
 @onready var _rows: VBoxContainer = %SettingsRows
@@ -28,6 +30,7 @@ const TOGGLES: Array = [
 var _slider_nodes: Dictionary = {}
 var _value_nodes: Dictionary = {}
 var _toggle_nodes: Dictionary = {}
+var _language_select: OptionButton
 
 
 func _ready() -> void:
@@ -43,6 +46,19 @@ func _ready() -> void:
 func present() -> void:
 	_refresh()
 	visible = true
+
+
+## 切语言后重建整块内容。滑块 / 开关的标签、语言下拉的选项都得重来一遍。
+func rebuild() -> void:
+	for child in _rows.get_children():
+		_rows.remove_child(child)
+		child.queue_free()
+	_slider_nodes.clear()
+	_value_nodes.clear()
+	_toggle_nodes.clear()
+	_language_select = null
+	_build()
+	_refresh()
 
 
 func hide_panel() -> void:
@@ -61,6 +77,46 @@ func _build() -> void:
 	_rows.add_child(sep)
 	for spec in TOGGLES:
 		_rows.add_child(_make_toggle_row(spec))
+	_rows.add_child(_make_language_row())
+
+
+## 语言是「几选一」而不是滑块或开关，所以单独一行。
+## 选项文字用各自语言写的语言名，本身不参与翻译。
+func _make_language_row() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 18)
+
+	var name_label := Label.new()
+	name_label.text = I18n.t("语言")
+	name_label.custom_minimum_size = Vector2(220.0, 0.0)
+	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	UiTheme.apply_label(name_label, UiTheme.TEXT_DIM, 22)
+	row.add_child(name_label)
+
+	var select := OptionButton.new()
+	select.custom_minimum_size = Vector2(260.0, 48.0)
+	for code in I18n.languages():
+		select.add_item(I18n.language_name(String(code)))
+		select.set_item_metadata(select.item_count - 1, String(code))
+	var current_code := String(ConfigManager.get_value(I18n.CONFIG_KEY, I18n.DEFAULT_LANG))
+	for i in select.item_count:
+		if String(select.get_item_metadata(i)) == current_code:
+			select.select(i)
+			break
+	select.item_selected.connect(_on_language_selected.bind(select))
+	UiTheme.apply_button(select, "small")
+	row.add_child(select)
+	_language_select = select
+	return row
+
+
+func _on_language_selected(_index: int, select: OptionButton) -> void:
+	var code := String(select.get_item_metadata(select.selected))
+	if code.is_empty():
+		return
+	# 切语言由 main 统一处理：它会重新翻译整棵界面树并刷新动态面板。
+	# 这里只负责改配置 —— 否则设置面板自己重建时，别的面板还是旧语言。
+	I18n.set_language(code)
 
 
 func _make_slider_row(spec: Dictionary) -> HBoxContainer:
@@ -86,6 +142,8 @@ func _make_slider_row(spec: Dictionary) -> HBoxContainer:
 	row.add_child(slider)
 
 	var value_label := Label.new()
+	# 数值是随滑块变的动态文字，翻译在 _format_value 里做，别让它再被查表
+	value_label.set_meta(I18n.META_SKIP, true)
 	value_label.custom_minimum_size = Vector2(150.0, 0.0)
 	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
@@ -156,7 +214,7 @@ static func _format_value(display: String, value: float) -> String:
 		"percent":
 			return "%d%%" % int(round(value * 100.0))
 		"chars":
-			return "%d 字/秒" % int(round(value))
+			return I18n.t("{n} 字/秒", {"n": int(round(value))})
 		"seconds":
-			return "%.1f 秒" % value
+			return I18n.t("{n} 秒", {"n": "%.1f" % value})
 	return str(value)

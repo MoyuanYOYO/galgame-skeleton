@@ -88,6 +88,11 @@ func _ready() -> void:
 	_check_tooling()
 	_check_runner_flow()
 	_check_save_roundtrip()
+	_check_rollback_buffer()
+	_check_audio()
+	_check_script_paths()
+	_check_shaders()
+	_check_architecture()
 	await _check_scenes()
 
 	# 还原现场
@@ -767,12 +772,44 @@ func _check_content_org() -> void:
 	_ok(ReadTracker.read_count() == before + 1, "标记已读后计数 +1")
 	ReadTracker.from_dict(read_backup2)
 
+	# --- 已读率的分母与分子必须同口径 ---
+	# 曾经显示成「已读 150 / 62 句」：分子用了全局的 ReadTracker.read_count()
+	# （跨存档、跨剧本版本，连测试探针都算在内），分母却只是当前剧本的台词数。
+	var lines := ScriptStats.line_texts()
+	_ok(lines.size() == ScriptStats.total_lines(),
+		"line_texts 与 total_lines 同口径（%d 句）" % lines.size())
+
+	var read_backup3 := ReadTracker.to_dict()
+	# 故意把全局计数推到超过总句数 —— 若哪天分子又用回全局计数，下面的断言必然失败
+	var need := ScriptStats.total_lines() + 1 - ReadTracker.read_count()
+	for i in maxi(0, need):
+		ReadTracker.mark_read("【smoke 口径探针 %d】" % i)
+	_ok(ReadTracker.read_count() > ScriptStats.total_lines(),
+		"全局已读数已被推高到超过总句数（%d > %d）"
+			% [ReadTracker.read_count(), ScriptStats.total_lines()])
+
+	var progress := RecordsPanel.read_progress()
+	_ok(progress.y == ScriptStats.total_lines(), "分母是当前剧本的台词数（%d）" % progress.y)
+	_ok(progress.x >= 0 and progress.x <= progress.y,
+		"记录面板的已读句数不超过总句数（%d / %d）" % [progress.x, progress.y])
+	ReadTracker.from_dict(read_backup3)
+
 	# --- 记录面板能构建（不崩、四个板块都在）---
 	var panel := RecordsPanel.new()
 	add_child(panel)
 	await get_tree().process_frame
 	panel.present()
 	_ok(panel.visible, "记录面板能打开")
+
+	# 面板必须按**视口**撑满，而不是被内容撑成一张「卡在左上角的卡片」。
+	# 这个 bug 真实存在过：Control 直接挂在 CanvasLayer 下时锚点拿不到视口
+	# 尺寸，size 由内容决定（约 1422×890），于是右边和下边各留一大片空、
+	# 路线图被截断、标题界面还从留白里透出来。
+	var vp_size := get_viewport().get_visible_rect().size
+	_ok(panel.size.is_equal_approx(vp_size),
+		"记录面板撑满视口（%.0f×%.0f / 视口 %.0f×%.0f）"
+			% [panel.size.x, panel.size.y, vp_size.x, vp_size.y])
+
 	panel.hide_panel()
 	_ok(not panel.visible, "记录面板能关闭")
 	panel.queue_free()
@@ -1257,6 +1294,14 @@ func _check_scenes() -> void:
 		_ok(not console.visible, "控制台默认收起")
 		console.toggle()
 		_ok(console.visible, "切换后打开")
+
+		# 控制台的矩形必须与视口一致。它曾经被撑成「视口宽 + 视口宽」（1920→3840）
+		# 的矩形，而面板是锚在**底部**的 —— 于是整个控制台被顶到画布外面，
+		# 按 `~` 什么都看不见。而逻辑测试只查 visible，所以一直没抓到。
+		var console_vp := get_viewport().get_visible_rect().size
+		_ok(console.size.is_equal_approx(console_vp),
+			"控制台尺寸等于视口（%.0f×%.0f / 视口 %.0f×%.0f）"
+				% [console.size.x, console.size.y, console_vp.x, console_vp.y])
 		# 跑几条只读命令，确认不崩
 		console.call("_execute", "state")
 		console.call("_execute", "audit")
@@ -1311,6 +1356,11 @@ func _check_scenes() -> void:
 	await _check_gallery(main_node, runner)
 	await _check_real_input(main_node, runner)
 	await _check_op_coverage()
+	_check_rollback(main_node, runner)
+	_check_save_manage(main_node)
+	_check_read_dim(main_node)
+	_check_marker_stripping(main_node)
+	_check_i18n(main_node)
 
 	main_node.queue_free()
 
@@ -1951,3 +2001,842 @@ func _collect_stage_cmd(cmd: Dictionary) -> void:
 
 func _collect_audio_cmd(cmd: Dictionary) -> void:
 	_seen_audio_ops.append(String(cmd.get("op", "")))
+
+
+# ---------------------------------------------------------------------------
+# 19. 界面本地化
+#
+# 最关键的一条是「切成英文再切回中文，必须回到中文」。
+# 实现上最容易在这里翻车：如果第二次翻译拿的是**已经翻好的英文**去查表，
+# 表里没有这条 key，就会原样返回英文，界面永远卡在英文上。
+# 所以原文必须存在节点的元数据里，每次都拿原文查表。
+# ---------------------------------------------------------------------------
+
+func _check_i18n(main_node: Node) -> void:
+	print("[smoke] 19. 界面本地化")
+
+	var original := String(ConfigManager.get_value(I18n.CONFIG_KEY, I18n.DEFAULT_LANG))
+	var langs := I18n.languages()
+	_ok(langs.has(I18n.DEFAULT_LANG), "语言列表里有默认语言 %s" % I18n.DEFAULT_LANG)
+	_ok(langs.has("en"), "data/i18n/ 下的英文表被识别到")
+
+	I18n.set_language("en")
+	# 缺条目必须回退原文 —— 漏翻只影响那一条，不能把界面显示成 key
+	_ok(I18n.t("这条文案根本没有") == "这条文案根本没有", "缺条目时回退原文")
+	_ok(I18n.t("开始游戏") == "Start Game", "静态文案翻译生效")
+	_ok(I18n.t("存档 {n}", {"n": 3}) == "Slot 3", "带参数的文案占位符生效")
+	_ok(I18n.t("删除") == "Delete", "新增的存档管理文案已进翻译表")
+	_ok(I18n.t("删除存档 {slot}？此操作不可撤销。", {"slot": "Slot 3"}).contains("Slot 3"),
+		"确认文案里的槽位占位符能正确替换")
+
+	var ui_layer := main_node.get("ui_layer") as CanvasLayer
+	var auto_btn := main_node.get("_btn_auto") as Button
+	I18n.apply_tree(ui_layer)
+	_ok(auto_btn.text.begins_with("Auto"),
+		"HUD 按钮已换成英文（现在是「%s」）" % auto_btn.text)
+
+	# 切回中文。这一步挂了的话，界面会永久卡在英文上。
+	I18n.set_language(I18n.DEFAULT_LANG)
+	I18n.apply_tree(ui_layer)
+	_ok(auto_btn.text.begins_with("自动"),
+		"切回中文能还原（现在是「%s」）" % auto_btn.text)
+
+	# 再切一次英文，确认可以反复来回
+	I18n.set_language("en")
+	I18n.apply_tree(ui_layer)
+	_ok(auto_btn.text.begins_with("Auto"), "可以反复来回切换")
+
+	I18n.set_language(original)
+	I18n.apply_tree(ui_layer)
+	_ok(String(ConfigManager.get_value(I18n.CONFIG_KEY, "")) == original,
+		"收尾还原成玩家原本的语言（%s）" % original)
+
+
+# ---------------------------------------------------------------------------
+# 20. 回滚缓冲（纯数据类，不需要场景）
+#
+# 回滚最容易翻车的两点，这里都要钉死：
+#   1. 游标与容量的边界 —— 空缓冲不能退、满了要丢最旧的、游标不能指错格；
+#   2. 回退后再推进，旧的「未来」历史必须丢掉 —— 否则会翻进一条
+#      其实没走过的分支（玩家回退改选项后，那段被抛弃的剧情还赖在历史里）。
+# ---------------------------------------------------------------------------
+
+func _check_rollback_buffer() -> void:
+	print("[smoke] 20. 回滚缓冲")
+
+	var buf := RollbackBuffer.new(3)
+	_ok(buf.is_empty() and buf.cursor() == -1, "新缓冲是空的，游标在 -1")
+	_ok(not buf.can_back() and not buf.can_forward(), "空缓冲前后都动不了")
+	_ok(buf.back().is_empty() and buf.forward().is_empty(), "空缓冲 back / forward 返回空字典")
+	_ok(buf.at(0).is_empty(), "越界取值返回空字典")
+
+	buf.push({"i": 1})
+	buf.push({"i": 2})
+	buf.push({"i": 3})
+	_ok(buf.size() == 3 and buf.cursor() == 2, "推满三格，游标停在最后一格")
+	_ok(int(buf.current().get("i", 0)) == 3, "current 是最后推入那格")
+
+	buf.push({"i": 4})
+	_ok(buf.size() == 3, "超出容量后总数不再增长")
+	_ok(int(buf.at(0).get("i", 0)) == 2, "丢掉的确实是最旧那格（现在 at(0) 是 2）")
+	_ok(buf.cursor() == 2, "满容量丢旧后游标仍指向最新那格")
+
+	_ok(int(buf.back().get("i", 0)) == 3, "back 返回上一格")
+	_ok(buf.cursor() == 1, "back 之后游标前移一格")
+	_ok(int(buf.forward().get("i", 0)) == 4, "forward 撤销一次回退，回到最新")
+	_ok(not buf.can_forward(), "到最新一格后不能再前进")
+
+	buf.back()
+	buf.back()
+	_ok(int(buf.current().get("i", 0)) == 2, "连退两格停在 2")
+	_ok(buf.can_forward(), "退回中间位置时还能前进")
+
+	# 关键：回退后再推进新剧情，未来那一截必须丢掉
+	buf.push({"i": 9})
+	_ok(buf.size() == 2, "回退后推新快照：作废的未来被整体丢弃（只剩 2 格）")
+	_ok(int(buf.at(0).get("i", 0)) == 2 and int(buf.at(1).get("i", 0)) == 9,
+		"丢弃后剩下的就是「当前位置」加「新剧情」")
+	_ok(buf.cursor() == 1 and not buf.can_forward(),
+		"分支截断后游标落在新快照上，且不能再前进")
+
+	buf.clear()
+	_ok(buf.is_empty() and buf.cursor() == -1, "clear 之后回到初始状态")
+
+
+# ---------------------------------------------------------------------------
+# 21. 回滚（端到端：采集 / 回退 / 前进 / 分支截断 / 选项处回退 / 滚轮输入）
+# ---------------------------------------------------------------------------
+
+const ROLLBACK_SCRIPT_PATH := "user://__smoke_rollback.gvs"
+
+## 三段线性剧情，每段都改背景和变量；末尾挂一个选项，用来测「退到选项处重选」。
+const ROLLBACK_SCRIPT := """label start
+bg classroom
+set var n 1
+narr 回滚·第一句
+bg rooftop
+set var n 2
+narr 回滚·第二句
+bg street
+set var n 3
+narr 回滚·第三句
+choice
+    "去 A" -> branch_a
+    "去 B" -> branch_b
+end
+label branch_a
+set var picked "a"
+narr A 线
+ending ra "A 结局"
+label branch_b
+set var picked "b"
+narr B 线
+ending rb "B 结局"
+"""
+
+
+func _check_rollback(main_node: Node, runner: ScriptRunner) -> void:
+	print("[smoke] 21. 回滚")
+
+	var writer := FileAccess.open(ROLLBACK_SCRIPT_PATH, FileAccess.WRITE)
+	if writer == null:
+		_ok(false, "无法写入回滚测试剧本")
+		return
+	writer.store_string(ROLLBACK_SCRIPT)
+	writer.close()
+
+	var dialogue := main_node.get("dialogue") as DialogueBox
+	var choices := main_node.get("choices") as ChoicePanel
+	var stage_node := main_node.get("stage") as Stage
+	var backlog := main_node.get("backlog") as BacklogPanel
+
+	# 用游戏自己的入口起一局 —— 它会清空历史、藏标题、开始跑剧本，
+	# 这样滚轮输入那一段的「非标题 / 无面板」前置条件才是真的
+	main_node.call("_close_modals")
+	main_node.call("_on_start_requested", ROLLBACK_SCRIPT_PATH, "")
+	var rb := main_node.get("_rollback") as RollbackBuffer
+
+	_ok(dialogue.get_full_text() == "回滚·第一句", "开局停在第一句")
+	_ok(rb.size() == 1 and rb.cursor() == 0, "开局历史里正好一句")
+
+	runner.advance()
+	_ok(dialogue.get_full_text() == "回滚·第二句", "推进到第二句")
+	runner.advance()
+	_ok(dialogue.get_full_text() == "回滚·第三句", "推进到第三句")
+	_ok(rb.size() == 3, "三句各留了一份快照")
+
+	var backlog_before := (main_node.get("_backlog_entries") as Array).size()
+	_ok(backlog_before == 3, "回看记录累计到 3 句")
+
+	# --- 回退：指针、软状态、画面三者必须一起退 ---
+	_ok(bool(main_node.call("_rollback_step", -1)), "回退一句成功")
+	_ok(dialogue.get_full_text() == "回滚·第二句", "回退后显示的是第二句")
+	_ok(int(GameManager.get_var("n", 0)) == 2, "回退后变量 n 还原成 2（不是 3）")
+	_ok(stage_node.get_bg_id() == "rooftop", "回退后背景还原成 rooftop（不是 street）")
+	_ok((main_node.get("_backlog_entries") as Array).size() == 2,
+		"回退后回看记录截到这一句")
+
+	_ok(bool(main_node.call("_rollback_step", -1)), "再回退一句成功")
+	_ok(dialogue.get_full_text() == "回滚·第一句", "回退到第一句")
+	_ok(int(GameManager.get_var("n", 0)) == 1, "变量跟着退到 1")
+	_ok(stage_node.get_bg_id() == "classroom", "背景跟着退到 classroom")
+	_ok(not bool(main_node.call("_rollback_step", -1)), "已经到历史开头，再退无效")
+	_ok(dialogue.get_full_text() == "回滚·第一句", "退到头后画面不变")
+
+	# --- 前进：撤销回退 ---
+	_ok(bool(main_node.call("_rollback_step", 1)), "前进一句成功")
+	_ok(dialogue.get_full_text() == "回滚·第二句", "前进后回到第二句")
+	_ok(int(GameManager.get_var("n", 0)) == 2, "前进后变量恢复成 2")
+	main_node.call("_rollback_step", 1)
+	_ok(dialogue.get_full_text() == "回滚·第三句", "再前进回到第三句")
+
+	# --- 退到选项处重选 ---
+	# 先真正推进到选项，缓冲区里才会留下那一格
+	runner.advance()
+	_ok(runner.is_waiting_choice() and choices.visible, "推进到选项，选项摊在眼前")
+	_ok(rb.size() == 4, "选项也占了一格历史")
+	_ok(String(rb.current().get("kind", "")) == "choice", "这一格标记为 choice")
+
+	# 退回对白：选项面板必须收起来，不能一直挡在前面
+	_ok(bool(main_node.call("_rollback_step", -1)), "从选项退回上一句成功")
+	_ok(dialogue.get_full_text() == "回滚·第三句", "退回后显示第三句")
+	_ok(not choices.visible, "退离选项后选项面板收起")
+	_ok(not runner.is_waiting_choice(), "调度器退出选项等待态")
+
+	# 再前进，回到「选项摊在眼前」那一格重新决断
+	_ok(bool(main_node.call("_rollback_step", 1)), "前进回到选项格成功")
+	_ok(runner.is_waiting_choice(), "前进历史能停在「等选项」那一格")
+	_ok(choices.visible, "停在选项格里，选项面板重新弹了出来")
+	_ok(dialogue.get_full_text() == "回滚·第三句", "选项背后仍是第三句上下文")
+
+	# 先选 A 走一遍
+	runner.submit_choice(0)
+	_ok(String(GameManager.get_var("picked", "")) == "a", "第一次选了 A 分支")
+	_ok(dialogue.get_full_text() == "A 线", "显示 A 线剧情")
+	_ok(rb.size() == 5, "A 线记进历史（共 5 格）")
+
+	# 退回选项、改选 B —— A 线那一格必须被丢弃，而不是叠加在后面
+	_ok(bool(main_node.call("_rollback_step", -1)), "从 A 线退回选项")
+	_ok(runner.is_waiting_choice() and choices.visible, "退回到选项等待态")
+	runner.submit_choice(1)
+	_ok(String(GameManager.get_var("picked", "")) == "b", "改选 B 分支")
+	_ok(dialogue.get_full_text() == "B 线", "显示 B 线剧情")
+	_ok(rb.size() == 5, "改选后历史长度不变（旧的未来被替换而非叠加）")
+	_ok(String(rb.current().get("text", "")) == "B 线", "当前格是 B 线")
+	_ok(not rb.can_forward(), "改选后无法再前进到被丢弃的 A 线")
+
+	var has_discarded_a := false
+	for i in rb.size():
+		if String(rb.at(i).get("text", "")) == "A 线":
+			has_discarded_a = true
+	_ok(not has_discarded_a, "被丢弃的 A 线彻底不在历史里")
+
+	# --- 滚轮输入 ---
+	main_node.call("_close_modals")
+	main_node.call("_on_start_requested", ROLLBACK_SCRIPT_PATH, "")
+	runner.advance()
+	runner.advance()
+	_ok(dialogue.get_full_text() == "回滚·第三句", "重置后停在第三句")
+
+	var cursor_before := rb.cursor()
+	var wheel_up := InputEventMouseButton.new()
+	wheel_up.button_index = MOUSE_BUTTON_WHEEL_UP
+	wheel_up.pressed = true
+	main_node.call("_unhandled_input", wheel_up)
+	_ok(rb.cursor() == cursor_before - 1, "滚轮向上回退了一格")
+	_ok(dialogue.get_full_text() == "回滚·第二句", "滚轮向上之后看到的是上一句")
+
+	var wheel_down := InputEventMouseButton.new()
+	wheel_down.button_index = MOUSE_BUTTON_WHEEL_DOWN
+	wheel_down.pressed = true
+	main_node.call("_unhandled_input", wheel_down)
+	_ok(dialogue.get_full_text() == "回滚·第三句", "滚轮向下撤销回退，回到第三句")
+
+	# --- 设置项：关掉滚轮回滚，滚轮上应退回「打开回看」 ---
+	ConfigManager.set_value("rollback_wheel", false, false)
+	var cursor_locked := rb.cursor()
+	main_node.call("_unhandled_input", wheel_up)
+	_ok(rb.cursor() == cursor_locked, "关掉「滚轮用于回滚」后，滚轮不再动历史")
+	_ok(backlog.visible, "关掉后滚轮向上退回打开回看面板（旧行为）")
+	main_node.call("_close_modals")
+	ConfigManager.set_value("rollback_wheel", true, false)
+
+	# --- 新开局必须清掉旧历史 ---
+	main_node.call("_on_start_requested", ROLLBACK_SCRIPT_PATH, "")
+	_ok(rb.size() == 1 and rb.cursor() == 0, "重新开局后历史清空到只剩第一句")
+
+	# --- 读档：回看记录不该被重复追加，回滚历史也不该跨存档接续 ---
+	runner.advance()
+	runner.advance()
+	var backlog_now := (main_node.get("_backlog_entries") as Array).size()
+	_ok(backlog_now == 3, "读档前回看记录 3 句")
+
+	SaveManager.delete_slot(PROBE_SLOT)
+	_ok(bool(SaveManager.write_slot(PROBE_SLOT, main_node.call("_build_payload"))),
+		"写入探针存档")
+	main_node.call("_load_slot", PROBE_SLOT)
+	_ok((main_node.get("_backlog_entries") as Array).size() == backlog_now,
+		"读档后回看记录没多出重复的一条")
+	_ok(rb.is_empty(), "读档后回滚历史被清空（不跨存档接续）")
+	_ok(dialogue.get_full_text() == "回滚·第三句", "读档回到了存档时那一句")
+	SaveManager.delete_slot(PROBE_SLOT)
+
+	# 公开的清空入口（调试 / 测试用）
+	main_node.call("clear_rollback_history")
+	_ok(rb.is_empty() and rb.cursor() == -1, "clear_rollback_history 能清空历史")
+
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(ROLLBACK_SCRIPT_PATH))
+	main_node.call("_back_to_title")
+
+
+# ---------------------------------------------------------------------------
+# 22. 着色器静态检查
+#
+# Godot 的着色语言**不允许**在 fragment() / vertex() 里用 return ——
+# 违反时着色器直接编译失败，但表现为「某个过渡效果就是不出来」，
+# 逻辑测试全绿、控制台只多一行 error，极易被当成「本来就没做」。
+# char_expr.gdshader 就真的踩过这个坑（表情交叉过渡整段失效）。
+# 这里静态守一道：扫 shaders/ 下每个文件的入口函数体，不许出现 return。
+# ---------------------------------------------------------------------------
+
+func _check_shaders() -> void:
+	print("[smoke] 22. 着色器静态检查")
+
+	var dir := DirAccess.open("res://shaders")
+	_ok(dir != null, "shaders 目录可打开")
+	if dir == null:
+		return
+
+	var files: Array = []
+	for f in dir.get_files():
+		if String(f).ends_with(".gdshader"):
+			files.append(String(f))
+	_ok(not files.is_empty(), "找到 %d 个着色器文件" % files.size())
+
+	for file_name in files:
+		var path := "res://shaders/%s" % file_name
+		var src := FileAccess.get_file_as_string(path)
+		if src.is_empty():
+			_ok(false, "%s 可读取" % file_name)
+			continue
+		var offenders := _shader_entry_returns(src)
+		if offenders.is_empty():
+			_ok(true, "%s 的 fragment / vertex 里没有非法 return" % file_name)
+		else:
+			_ok(false, "%s 在 %s 里用了 return（Godot 着色语言不允许，会编译失败）"
+				% [file_name, ", ".join(offenders)])
+
+
+## 返回「在函数体里出现 return」的入口函数名列表。
+func _shader_entry_returns(src: String) -> Array:
+	var found: Array = []
+	for entry in ["fragment", "vertex"]:
+		var body := _extract_function_body(src, entry)
+		if body.is_empty():
+			continue
+		if _has_return_statement(_strip_line_comments(body)):
+			found.append(entry)
+	return found
+
+
+## 粗略抽取 `void <name>(...) { ... }` 的函数体，按大括号配平。
+func _extract_function_body(src: String, fname: String) -> String:
+	var start := src.find("void %s(" % fname)
+	if start < 0:
+		return ""
+	var brace := src.find("{", start)
+	if brace < 0:
+		return ""
+	var depth := 0
+	var i := brace
+	while i < src.length():
+		var ch := src[i]
+		if ch == "{":
+			depth += 1
+		elif ch == "}":
+			depth -= 1
+			if depth == 0:
+				return src.substr(brace + 1, i - brace - 1)
+		i += 1
+	return ""
+
+
+## 去掉 // 行注释，避免把说明文字里的 return 误判成语句。
+func _strip_line_comments(src: String) -> String:
+	var out := ""
+	for line in src.split("\n"):
+		var at := line.find("//")
+		out += (line.substr(0, at) if at >= 0 else line) + "\n"
+	return out
+
+
+## 用词边界匹配，避免把 returned / return_value 这类标识符算进去。
+func _has_return_statement(body: String) -> bool:
+	var re := RegEx.new()
+	if re.compile("(^|[^A-Za-z0-9_])return([^A-Za-z0-9_]|$)") != OK:
+		return body.contains("return")
+	return re.search(body) != null
+
+
+# ---------------------------------------------------------------------------
+# 23. 音频：BGM 循环与语音队列
+#
+# 两个都属于「没有素材就完全看不出来」的问题：
+#   · BGM 不循环 —— 骨架阶段 assets/audio/bgm/ 是空的，一放进真实曲子才会
+#     发现「播完一遍就静音了」；
+#   · 语音只有一条通道 —— 同一句里连写多条 voice 时，后面那句会把前面打断。
+# 所以这里用**代码合成的静音流**来驱动，不依赖任何素材文件。
+# ---------------------------------------------------------------------------
+
+func _check_audio() -> void:
+	print("[smoke] 23. 音频：BGM 循环与语音队列")
+
+	# --- 循环开关 ---
+	# 三种音频流的「循环」字段名不一样：Ogg / MP3 是 loop(bool)，WAV 是 loop_mode(枚举)。
+	var wav := _make_silent_stream()
+	AudioManager.enable_stream_loop(wav)
+	_ok(wav.loop_mode == AudioStreamWAV.LOOP_FORWARD,
+		"WAV 通过 loop_mode 打开循环（字段名与 Ogg / MP3 不同）")
+	AudioManager.enable_stream_loop(null)
+	_ok(true, "传空流不会崩")
+
+	# --- 语音队列 ---
+	AudioManager.stop_voice()
+	var stream := _make_silent_stream()
+
+	AudioManager.voice_channel("v1", stream)
+	_ok(AudioManager.is_voice_active() and AudioManager.get_voice_id() == "v1",
+		"第一条语音立刻开播")
+
+	AudioManager.voice_channel("v2", stream, 1.0, true)
+	AudioManager.voice_channel("v3", stream, 1.0, true)
+	_ok(AudioManager.get_voice_queue_size() == 2, "同句后续语音进入队列（2 条）")
+	_ok(AudioManager.get_voice_id() == "v1", "队首不被抢走，仍播第一条")
+
+	AudioManager.notify_voice_finished()
+	_ok(AudioManager.get_voice_id() == "v2", "播完自动接上第二条")
+	_ok(AudioManager.get_voice_queue_size() == 1, "队列递减到 1")
+	AudioManager.notify_voice_finished()
+	_ok(AudioManager.get_voice_id() == "v3", "再接上第三条")
+	AudioManager.notify_voice_finished()
+	_ok(not AudioManager.is_voice_active() and AudioManager.get_voice_queue_size() == 0,
+		"整个队列播完，通道回到空闲")
+
+	# --- 换句：打断并清队列（否则声画错位）---
+	AudioManager.voice_channel("a", stream)
+	AudioManager.voice_channel("b", stream, 1.0, true)
+	_ok(AudioManager.get_voice_queue_size() == 1, "先排队一条")
+	AudioManager.voice_channel("c", stream)
+	_ok(AudioManager.get_voice_id() == "c" and AudioManager.get_voice_queue_size() == 0,
+		"不排队的新语音打断当前，并把排队的一并清掉")
+
+	AudioManager.stop_voice()
+	_ok(not AudioManager.is_voice_active() and AudioManager.get_voice_queue_size() == 0,
+		"stop_voice 清空通道与队列")
+
+	# --- 素材缺失：静默跳过，不占位置也不打断 ---
+	AudioManager.voice_channel("a", stream)
+	AudioManager.voice_channel("并没有这个素材", null)
+	_ok(AudioManager.get_voice_id() == "a",
+		"没有素材的语音被静默跳过，不会打断正在播的那条")
+	AudioManager.voice_channel("也没有这个素材", null, 1.0, true)
+	_ok(AudioManager.get_voice_queue_size() == 0, "没有素材的语音不占队列位置")
+	AudioManager.stop_voice()
+
+
+## 合成 0.1 秒静音流。没有它，语音队列在素材缺失的骨架工程里根本无从验证。
+static func _make_silent_stream() -> AudioStreamWAV:
+	var wav := AudioStreamWAV.new()
+	wav.format = AudioStreamWAV.FORMAT_16_BITS
+	wav.mix_rate = 22050
+	wav.stereo = false
+	var bytes := PackedByteArray()
+	bytes.resize(2205 * 2)
+	wav.data = bytes
+	return wav
+
+
+# ---------------------------------------------------------------------------
+# 24. 存档删除与覆盖确认
+#
+# 存档是玩家几十小时的进度，写操作必须过一道确认。
+# 原先的问题：SaveManager 有 delete_slot() 这个 API，界面却根本没有入口 ——
+# 删不掉，而且覆盖已有存档是**点了就写**，没有任何提示。
+# ---------------------------------------------------------------------------
+
+func _check_save_manage(main_node: Node) -> void:
+	print("[smoke] 24. 存档删除与覆盖确认")
+
+	var save_load := main_node.get("save_load") as SaveLoadPanel
+	if save_load == null:
+		_ok(false, "存读档面板缺失")
+		return
+
+	var slot := PROBE_SLOT
+	var spare := PROBE_SLOT - 1
+	SaveManager.delete_slot(slot)
+	SaveManager.delete_slot(spare)
+	_ok(bool(SaveManager.write_slot(slot, {"chapter_title": "删除测试", "preview": "内容"})),
+		"写入一个用于删除测试的存档")
+
+	var chosen := {"slot": -1}
+	save_load.slot_chosen.connect(func(s: int) -> void: chosen["slot"] = s)
+	save_load.present(false)
+	_ok(not save_load.is_confirm_visible(), "刚打开面板时没有确认弹层")
+
+	# 覆盖已占用的槽位 → 先确认
+	save_load.call("_on_slot_pressed", slot)
+	_ok(save_load.is_confirm_visible(), "覆盖已占用槽位会先弹确认")
+	_ok(int(chosen["slot"]) == -1, "确认之前不会真的写下去")
+	_ok(save_load.get_confirm_text().contains("覆盖"), "文案说明这是覆盖操作")
+
+	save_load.confirm_cancel()
+	_ok(not save_load.is_confirm_visible() and int(chosen["slot"]) == -1,
+		"点取消：不覆盖，弹层收起")
+
+	save_load.call("_on_slot_pressed", slot)
+	save_load.confirm_accept()
+	_ok(int(chosen["slot"]) == slot, "点确定：才真的发出保存请求")
+
+	# 空槽位直接保存，不该多一步确认
+	chosen["slot"] = -1
+	save_load.call("_on_slot_pressed", spare)
+	_ok(not save_load.is_confirm_visible() and int(chosen["slot"]) == spare,
+		"空槽位直接进入保存，不弹确认")
+
+	# 自动存档槽：能读，但不该手动写
+	SaveManager.write_slot(SaveManager.AUTO_SLOT, {"chapter_title": "自动", "preview": "x"})
+	save_load.present(false)
+	_ok(not save_load.is_slot_enabled(SaveManager.AUTO_SLOT),
+		"保存模式下自动存档槽不可点（写了也会被下一次自动存档冲掉）")
+	save_load.present(true)
+	_ok(save_load.is_slot_enabled(SaveManager.AUTO_SLOT),
+		"读取模式下自动存档槽可点（读是合理的）")
+
+	# 删除 → 先确认，确认后存档与缩略图一起消失
+	var changed := {"fired": false}
+	save_load.slots_changed.connect(func() -> void: changed["fired"] = true)
+	save_load.present(false)
+	save_load.call("_on_delete_pressed", slot)
+	_ok(save_load.is_confirm_visible(), "删除会先弹确认")
+	_ok(save_load.get_confirm_text().contains("删除"), "文案说明这是删除操作")
+
+	save_load.confirm_cancel()
+	_ok(SaveManager.slot_exists(slot), "点取消：存档还在")
+
+	save_load.call("_on_delete_pressed", slot)
+	save_load.confirm_accept()
+	_ok(not SaveManager.slot_exists(slot), "点确定：存档被删除")
+	_ok(not SaveManager.has_thumbnail(slot), "删除存档时缩略图一并清理")
+	_ok(bool(changed["fired"]), "删除后发出 slots_changed，标题按钮状态得以刷新")
+
+	save_load.hide_panel()
+	_ok(not save_load.is_confirm_visible(), "关面板会把确认弹层一并收起")
+
+	SaveManager.delete_slot(spare)
+
+
+# ---------------------------------------------------------------------------
+# 25. 已读文本变暗
+#
+# 顺序坑：_on_say 会**先 mark_read、再 show_line**。如果 show_line 自己去查
+# ReadTracker，查到的永远是「已读」—— 于是每一句（含第一次看到的）都被压暗。
+# 所以「这句以前看过没有」必须由 _on_say 在标记之前问出来，再传进去。
+# ---------------------------------------------------------------------------
+
+func _check_read_dim(main_node: Node) -> void:
+	print("[smoke] 25. 已读文本变暗")
+
+	var dialogue := main_node.get("dialogue") as DialogueBox
+	var text_label := main_node.get_node("%TextLabel") as RichTextLabel
+	if dialogue == null or text_label == null:
+		_ok(false, "对话框 / 文本控件缺失")
+		return
+
+	var old_dim: Variant = ConfigManager.get_value("dim_read_text", false)
+	# 用随机文案，避免撞上玩家已有的已读记录；也不去 clear() 别人的记录
+	var line := "【smoke】已读判定 %d" % randi()
+
+	ConfigManager.set_value("dim_read_text", true, false)
+
+	main_node.call("_on_say", "", line, "")
+	_ok(text_label.get_theme_color("default_color") == UiTheme.TEXT,
+		"第一次看到：正常字色（不会被自己刚标记的已读误伤）")
+	_ok(ReadTracker.is_read(line), "显示之后才被标记成已读")
+
+	main_node.call("_on_say", "", line, "")
+	_ok(text_label.get_theme_color("default_color") == UiTheme.TEXT_DIM,
+		"重看同一句：压暗")
+
+	ConfigManager.set_value("dim_read_text", false, false)
+	main_node.call("_on_say", "", line, "")
+	_ok(text_label.get_theme_color("default_color") == UiTheme.TEXT,
+		"关掉开关后，已读文本也保持正常字色")
+
+	ConfigManager.set_value("dim_read_text", old_dim, false)
+	dialogue.hide_box()
+
+
+# ---------------------------------------------------------------------------
+# 26. 标记不外漏
+#
+# 台词里带着 [wait=0.7] / [speed=2.5] / [bounce] 这些标记 —— 它们只对打字机
+# 有意义。任何「把台词渲染成静态一行」的地方都必须先剥掉，否则玩家会看到
+# `alice: 明天，[speed=2.5]要不要一起走？[/speed]`。
+# 回看面板与存档预览都真出过这个问题（截图对比时一眼看到）。
+#
+# 两处的剥法还不一样：回看面板是 RichTextLabel，特效标记要留着给它渲染；
+# 存档预览是普通 Label（不解析 BBCode），所以标签必须全部丢掉。
+# ---------------------------------------------------------------------------
+
+func _check_marker_stripping(main_node: Node) -> void:
+	print("[smoke] 26. 标记不外漏")
+
+	_ok(TypingTimeline.strip("前[wait=0.5]后") == "前后", "strip 剥掉等待标记")
+	_ok(TypingTimeline.strip("这一句[speed=3]很快[/speed]") == "这一句很快",
+		"strip 剥掉变速标记（含闭合标签）")
+	_ok(TypingTimeline.strip("弹[bounce height=13]跳[/bounce]")
+		== "弹[bounce height=13]跳[/bounce]",
+		"strip 保留特效标记，交给 RichTextLabel")
+
+	# 存档预览：普通 Label，所有标签都必须消失
+	var lines := SaveLoadPanel._slot_lines(PROBE_SLOT, {
+		"empty": false,
+		"chapter_title": "测试章",
+		"saved_at": "2026-01-01 00:00:00",
+		"preview": "明天，[speed=2.5]要不要一起走？[/speed][wait=0.9]",
+		"speaker": "alice",
+		"play_time": 12.0,
+	})
+	_ok(not String(lines[1]).contains("["),
+		"存档预览里没有任何标记残留（%s）" % String(lines[1]))
+	_ok(String(lines[1]).contains("要不要一起走"), "预览保留了正文")
+	_ok(String(lines[1]).contains("alice"), "预览仍带说话人")
+
+	# 回看面板：RichTextLabel，只剥节奏标记，特效标记留着
+	var backlog := main_node.get("backlog") as BacklogPanel
+	backlog.present([{"speaker": "alice", "text": "前[wait=0.5]后[bounce]弹[/bounce]"}])
+	var texts := _collect_rich_text(backlog)
+	_ok(texts.size() == 1, "回看里生成了 1 条")
+	if texts.size() == 1:
+		_ok(not texts[0].contains("[wait"), "回看条目里没有残留的节奏标记")
+		_ok(texts[0].contains("[bounce]"), "回看条目保留特效标记（由 RichTextLabel 渲染）")
+	backlog.hide_panel()
+
+
+## 收集一棵子树里所有 RichTextLabel 的 text
+func _collect_rich_text(root: Node) -> PackedStringArray:
+	var out := PackedStringArray()
+	if root is RichTextLabel:
+		out.append((root as RichTextLabel).text)
+	for child in root.get_children():
+		out.append_array(_collect_rich_text(child))
+	return out
+
+
+# ---------------------------------------------------------------------------
+# 27. 架构守卫
+#
+# 分层是这个骨架能长期维护的前提，而它最容易在「顺手加一行」时被打破 ——
+# 在 autoload 里 new 一个面板、在 core 里 import 一个 UI 类、把路径常量又抄一份。
+# 这类破坏**没有任何运行时症状**，直到某天想单独替换某一层才发现拆不开。
+# 所以这里做静态扫描，把「看不见的约定」变成会失败的断言。
+#
+# 例外必须写进白名单并写明理由 —— 有理由的例外才是设计，没理由的就是漏。
+# ---------------------------------------------------------------------------
+
+## core / autoload 里不该出现的表现层类型（面板 / 演出层 / 调试台）
+const PRESENTATION_TYPES: PackedStringArray = [
+	"DialogueBox", "BacklogPanel", "ChoicePanel", "GalleryPanel", "CgViewer",
+	"RecordsPanel", "SettingsPanel", "SaveLoadPanel", "MusicPanel", "TitleScreen",
+	"LockIcon", "RecordDisc", "SpectrumBars", "DebugConsole", "Stage",
+]
+## 唯一允许反过来抓编排层的表现层文件：调试台本来就是个「什么都能碰」的工具，
+## 拿 main 引用来换实现简单，是作者在它文件头注明的取舍。
+const ORCHESTRATOR_EXCEPTIONS: PackedStringArray = ["debug_console.gd"]
+## 唯一允许出现剧本路径字面量的文件 —— 它就是「路径住在哪」的权威
+const PATH_AUTHORITY := "script_paths.gd"
+const SCRIPT_DIR_LITERAL := "\"res://data/scripts"
+
+
+func _check_architecture() -> void:
+	print("[smoke] 27. 架构守卫")
+
+	# --- 规则一：core / autoload 不得引用表现层 ---
+	var violations: Array = []
+	var scanned: PackedStringArray = []
+	for prefix in ["core", "autoload"]:
+		scanned.append_array(_all_gd_files("res://scripts/" + prefix))
+	_ok(not scanned.is_empty(), "扫到 %d 个 core / autoload 文件" % scanned.size())
+	for name in scanned:
+		var code := _code_only("res://scripts/%s" % name)
+		for type_name in PRESENTATION_TYPES:
+			if _mentions(code, type_name):
+				violations.append("%s → %s" % [name, type_name])
+	if violations.is_empty():
+		_ok(true, "core / autoload 没有引用任何表现层类型")
+	else:
+		_ok(false, "core / autoload 引用了表现层：%s" % ", ".join(violations))
+
+	# --- 规则二：表现层不得反向抓编排层 ---
+	var reverse: Array = []
+	for prefix in ["ui", "stage"]:
+		for name in _all_gd_files("res://scripts/" + prefix):
+			if ORCHESTRATOR_EXCEPTIONS.has(name.get_file()):
+				continue
+			var code := _code_only("res://scripts/%s" % name)
+			if _mentions(code, "_main") or _mentions(code, "main_node"):
+				reverse.append(String(name))
+	if reverse.is_empty():
+		_ok(true, "表现层没有反向引用编排层（调试台按白名单豁免）")
+	else:
+		_ok(false, "表现层反向引用了编排层：%s" % ", ".join(reverse))
+
+	# --- 规则三：剧本路径知识必须集中在 ScriptPaths ---
+	var scattered: Array = []
+	var authority_seen := false
+	for name in _all_gd_files("res://scripts"):
+		if not _has_path_literal("res://scripts/%s" % name):
+			continue
+		if String(name).get_file() == PATH_AUTHORITY:
+			authority_seen = true
+			continue
+		scattered.append(String(name))
+	_ok(authority_seen, "%s 确实是路径字面量的持有者" % PATH_AUTHORITY)
+	if scattered.is_empty():
+		_ok(true, "除 %s 外没有别的文件硬写剧本路径" % PATH_AUTHORITY)
+	else:
+		_ok(false, "剧本路径又散出来了：%s" % ", ".join(scattered))
+
+	# --- 守卫自检：一个从不失败的守卫等于没有守卫 ---
+	# 喂几段合成源码，确认它「抓得到真违规」而且「不误报注释 / 字符串」
+	_ok(_mentions(_code_only_of("var s: Stage = null"), "Stage"),
+		"守卫能抓到代码里的表现层引用")
+	_ok(not _mentions(_code_only_of("## 转发给 Stage 演出层"), "Stage"),
+		"守卫忽略注释里提到的类名")
+	_ok(not _mentions(_code_only_of("push_warning(\"[Stage] 出错了\")"), "Stage"),
+		"守卫忽略字符串里提到的类名")
+	_ok(not _mentions(_code_only_of("var staged := 1"), "Stage"),
+		"守卫用词边界匹配，不会误伤 StageXxx")
+
+
+## 递归列出 root 下所有 .gd（返回相对 root 的路径）
+static func _all_gd_files(root: String, prefix: String = "") -> PackedStringArray:
+	# 把 root 规整成带结尾斜杠 —— 否则递归时 "res://scripts" + "core/" 会拼成
+	# "res://scriptscore/"，子目录静默扫不到（守卫会假绿）
+	var base := root if root.ends_with("/") else root + "/"
+	var out := PackedStringArray()
+	var dir := DirAccess.open(base + prefix)
+	if dir == null:
+		return out
+	for file_name in dir.get_files():
+		if String(file_name).ends_with(".gd"):
+			out.append(prefix + String(file_name))
+	for sub in dir.get_directories():
+		out.append_array(_all_gd_files(base, prefix + String(sub) + "/"))
+	return out
+
+
+## 只留「代码骨架」：先剥掉 "..." 里的内容，再砍掉 # 注释。
+##
+## 顺序不能反 —— GDScript 的 `#` 也出现在字符串里（比如 `"[color=#a9a3d0]"`），
+## 先砍注释就会把这类行从中间截断。剥字符串而不是注释的目的：
+## 文件头注释里提到的类名（「转发给 Stage」）会被误报成违规。
+static func _code_only(path: String) -> String:
+	return _code_only_of(FileAccess.get_file_as_string(path))
+
+
+static func _code_only_of(source: String) -> String:
+	var out := ""
+	for raw_line in source.split("\n"):
+		var line := _strip_quoted(String(raw_line))
+		var hash_at := line.find("#")
+		if hash_at >= 0:
+			line = line.substr(0, hash_at)
+		out += line + "\n"
+	return out
+
+
+static func _strip_quoted(line: String) -> String:
+	var out := ""
+	var in_string := false
+	for i in line.length():
+		if line[i] == "\"":
+			in_string = not in_string
+			continue
+		if not in_string:
+			out += line[i]
+	return out
+
+
+## 这一处路径字面量是不是「真写在代码里」（而不是出现在注释里）。
+## 规则三找的恰好是字符串内容，所以不能走 _code_only，只能按行判断 ——
+## 行内 `#` 出现在字面量之前，就认为那是注释。
+static func _has_path_literal(path: String) -> bool:
+	for raw_line in FileAccess.get_file_as_string(path).split("\n"):
+		var at := raw_line.find(SCRIPT_DIR_LITERAL)
+		if at < 0:
+			continue
+		var hash_at := raw_line.find("#")
+		if hash_at >= 0 and hash_at < at:
+			continue
+		return true
+	return false
+
+
+## 词边界匹配，避免 Stage 命中 StageDemo 这类前缀相同的标识符
+static func _mentions(code: String, word: String) -> bool:
+	var re := RegEx.new()
+	if re.compile("(^|[^A-Za-z0-9_])%s([^A-Za-z0-9_]|$)" % word) != OK:
+		return code.contains(word)
+	return re.search(code) != null
+
+
+# ---------------------------------------------------------------------------
+# 28. 剧本路径解析（ScriptPaths）
+#
+# 它是「剧本文件住在哪」的唯一权威，也是「剧本按语言分目录」这套能力的地基。
+# 这里不真的去建语言目录（测试不该往 res:// 里写文件），只守住三件事：
+#   · 源语言下一切照旧，不引入任何路径漂移；
+#   · 目标语言没有目录 / 缺某个文件时**安静回退**，而不是报错丢剧情；
+#   · 非剧本路径（测试剧本在 user://）原样放过 —— 否则整条测试链会断。
+# ---------------------------------------------------------------------------
+
+func _check_script_paths() -> void:
+	print("[smoke] 28. 剧本路径解析")
+
+	var original := String(ConfigManager.get_value("language", "zh_CN"))
+
+	_ok(ScriptPaths.is_source_language(), "默认语言是源语言（不做任何映射）")
+	_ok(ScriptPaths.entry().ends_with("prologue.gvs"), "入口剧本指向 prologue.gvs")
+	_ok(FileAccess.file_exists(ScriptPaths.entry()), "入口剧本文件真实存在")
+	_ok(FileAccess.file_exists(ScriptPaths.chapters_path()), "章节表路径可读")
+
+	var files := ScriptPaths.list_scripts()
+	_ok(files.size() >= 2, "列出 %d 个剧本" % files.size())
+	var all_logical := true
+	for f in files:
+		if not String(f).begins_with(ScriptPaths.DIR):
+			all_logical = false
+	_ok(all_logical, "列出的都是逻辑路径（与语言无关，存档才不会因换语言而失效）")
+
+	var sample := ScriptPaths.DIR + "prologue.gvs"
+	_ok(ScriptPaths.resolve(sample) == sample, "源语言下 resolve 不改变路径")
+	_ok(ScriptPaths.resolve("user://__x.gvs") == "user://__x.gvs",
+		"非剧本路径原样返回（测试剧本在 user://）")
+
+	# 目标语言没有自己的目录 → 安静回退
+	ConfigManager.set_value("language", "ja_JP", false)
+	_ok(not ScriptPaths.is_source_language(), "切到 ja_JP 后不再是源语言")
+	_ok(ScriptPaths.active_dir() == ScriptPaths.DIR,
+		"没有 ja_JP 剧本目录时回退到源语言目录")
+	_ok(ScriptPaths.resolve(sample) == sample,
+		"目标语言缺这个文件时回退源语言路径（单文件缺译文不该让整段剧情加载失败）")
+	_ok(ScriptPaths.chapters_path() == ScriptPaths.CHAPTERS,
+		"目标语言缺章节表时回退源语言章节表")
+	_ok(ScriptPaths.list_scripts().size() == files.size(),
+		"回退后列出的剧本与源语言一致")
+
+	# 换语言时 _current_file 记的是逻辑路径，所以读档不会因为语言变化而找不到剧本
+	ConfigManager.set_value("language", original, false)
+	_ok(String(ConfigManager.get_value("language", "")) == original, "收尾还原语言设置")

@@ -78,14 +78,16 @@ func toggle() -> void:
 
 ## 把自己撑满视口。CanvasLayer 不是 Control，锚点指望不上。
 ##
-## 注意：FULL_RECT 锚点的左右（上下）是非等值的，这时 size 会被 offset 反推，
-## 直接赋 size 会被引擎警告并覆盖。所以要设 offset 而不是 size。
+## 锚点全部固定在左上角（BEGIN），矩形**完全由 offset 决定**。
+## 不能写成 FULL_RECT + `offset_right = 视口宽` —— FULL_RECT 的左右锚点非等值，
+## 那样会得到「视口宽 + 视口宽」，控制台被撑成 1920 → 3840 的矩形；
+## 而它的面板锚在**底部**，于是整个被顶到画布外面，按 `~` 什么都看不见。
 func _fit_to_viewport() -> void:
 	var vp := get_viewport()
 	if vp == null:
 		return
 	var rect := vp.get_visible_rect().size
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	set_anchors_preset(Control.PRESET_TOP_LEFT)
 	offset_left = 0.0
 	offset_top = 0.0
 	offset_right = rect.x
@@ -162,6 +164,8 @@ func _execute(text: String) -> void:
 			_cmd_assets()
 		"reload":
 			_cmd_reload()
+		"rollback":
+			_cmd_rollback(args)
 		"read":
 			_cmd_read(args)
 		"clear":
@@ -184,6 +188,7 @@ func _print_help() -> void:
 		["audit", "跑一遍剧本静态校验"],
 		["assets", "列出缺哪些素材"],
 		["reload", "热重载当前剧本（从当前标签重开）"],
+		["rollback [n]", "回退 n 句（默认 1）；负数表示前进"],
 		["read clear", "清空已读记录"],
 		["clear", "清屏"],
 	]
@@ -211,8 +216,9 @@ func _cmd_goto(args: PackedStringArray) -> void:
 		return
 	var runner: ScriptRunner = _main.get("runner") as ScriptRunner
 	var file := String(args[0])
+	# 允许只写文件名（如 chapter1.gvs），目录由 ScriptPaths 决定
 	if not file.begins_with("res://"):
-		file = "res://data/scripts/" + file
+		file = ScriptPaths.DIR + file
 	if not runner.load_script(file):
 		_print_line("[color=#E24B4A]加载失败：%s[/color]" % file)
 		return
@@ -308,8 +314,13 @@ func _cmd_state() -> void:
 	else:
 		for who in affs.keys():
 			_print_line("好感度　%s = %.1f" % [who, float(affs[who])])
-	_print_line("已读　　%d 句" % ReadTracker.read_count())
+	_print_line("已读　　%d / %d 句（当前剧本）"
+		% [ReadTracker.read_count_of(ScriptStats.line_texts()), ScriptStats.total_lines()])
 	_print_line("选项　　%d 个已记录" % RouteTracker.pick_count())
+	var rollback := _main.get("_rollback") as RollbackBuffer
+	if rollback != null:
+		_print_line("回滚　　%d / %d 格（游标 %d）"
+			% [rollback.size(), rollback.capacity, rollback.cursor()])
 
 
 func _cmd_audit() -> void:
@@ -354,10 +365,38 @@ func _cmd_reload() -> void:
 		% [file.get_file(), label if not label.is_empty() else "开头"])
 
 
+## 回退 / 前进若干句。负数表示前进（撤销回退）。
+## 「回到刚才那句重看一下演出」不用再重启从头点。
+func _cmd_rollback(args: PackedStringArray) -> void:
+	var steps := 1
+	if not args.is_empty():
+		steps = int(String(args[0]))
+	if steps == 0:
+		_print_line("[color=#E24B4A]用法：rollback [n]（n 为回退句数，负数=前进）[/color]")
+		return
+	var direction := -1 if steps > 0 else 1
+	var moved := 0
+	for i in absi(steps):
+		if not bool(_main.call("_rollback_step", direction)):
+			break
+		moved += 1
+	if moved == 0:
+		_print_line("[color=#EF9F27]已经在历史尽头，没得再动了[/color]")
+		return
+	var runner: ScriptRunner = _main.get("runner") as ScriptRunner
+	_print_line("[color=#5DCAA5]%s %d 句，现在停在「%s」[/color]"
+		% ["回退" if direction < 0 else "前进", moved, runner.get_current_label()])
+
+
 func _cmd_read(args: PackedStringArray) -> void:
 	if args.is_empty():
-		_print_line("已读 %d 句 / 全部 %d 句"
-			% [ReadTracker.read_count(), ScriptStats.total_lines()])
+		# 两个数分开报：前者的分母是「当前剧本」，后者是这台机器上记的总条数
+		# （含别的剧本、旧版本台词、测试探针）。混在一起报就会出现
+		# 「已读 150 / 62 句」这种分子大于分母的怪结果。
+		var lines := ScriptStats.line_texts()
+		_print_line("当前剧本　已读 %d / %d 句"
+			% [ReadTracker.read_count_of(lines), lines.size()])
+		_print_line("已读记录总数　%d 条" % ReadTracker.read_count())
 		return
 	if String(args[0]).to_lower() == "clear":
 		ReadTracker.clear()

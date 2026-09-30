@@ -57,6 +57,15 @@ static func build(text: String, chars_per_second: float) -> Dictionary:
 	return {"display": display, "times": times}
 
 
+## 只剥离节奏标记，不要时间轴。
+##
+## 回看面板、存档预览这类「把台词显示成一行静态文字」的地方用它 ——
+## 它们不走打字机，但同样不能把 [speed=3] / [wait=0.9] 原样漏给玩家看。
+## 非节奏标记（[bounce] / [color=…] 这些）照旧保留，交给 RichTextLabel 渲染。
+static func strip(text: String) -> String:
+	return String(build(text, 1.0).get("display", text))
+
+
 ## 这个 BBCode 标签是不是节奏控制（是的话要从显示文本里剥掉）
 static func _is_timing_tag(tag: String) -> bool:
 	var name := _tag_name(tag)
@@ -105,6 +114,9 @@ static func revealed_count(times: PackedFloat64Array, elapsed: float) -> int:
 	var low := 0
 	var high := times.size()
 	while low < high:
+		# 中点必须向下取整：改成浮点会得到 times[0.5] 这种下标，直接越界。
+		# 编辑器会提示「整数除法会丢小数」，但这里丢掉的正是要丢的。
+		@warning_ignore("integer_division")
 		var mid := (low + high) / 2
 		if times[mid] <= elapsed:
 			low = mid + 1

@@ -27,6 +27,7 @@ SaveManager="*res://scripts/autoload/save_manager.gd"
 CollectionManager="*res://scripts/autoload/collection_manager.gd"
 ReadTracker="*res://scripts/autoload/read_tracker.gd"
 RouteTracker="*res://scripts/autoload/route_tracker.gd"
+I18n="*res://scripts/autoload/i18n.gd"
 _mcp_game_helper="*res://addons/godot_ai/runtime/game_helper.gd"
 
 [display]

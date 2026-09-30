@@ -203,6 +203,10 @@ label ending_together
 alice@smile: 那就说定了。
 affection alice 15
 flag route_together
+# 这一条是给「章节选择」用的：chapters.json 里第一章声明了 unlock_flag，
+# 必须由剧本把它置位，否则那一章在章节选择里永远是灰的。
+# 静态校验（tools/audit）会检查每个 unlock_flag 有没有人设置，漏了会提醒。
+flag __chapter1_unlocked
 jump_file res://data/scripts/chapter1.gvs chapter1_start
 
 label ending_alone

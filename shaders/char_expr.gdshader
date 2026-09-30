@@ -15,10 +15,13 @@ uniform bool has_from = false;
 
 void fragment() {
 	vec4 base = texture(TEXTURE, UV);
-	if (!has_from) {
+	// 注意：Godot 的着色语言不允许在 fragment() 里用 return ——
+	// 必须写成 if/else 把结果都赋给 COLOR，否则编译直接失败
+	// （表现为表情过渡整段失效，而逻辑测试仍然全绿，很难发现）。
+	if (has_from) {
+		vec4 prev = texture(from_tex, UV);
+		COLOR = mix(prev, base, progress);
+	} else {
 		COLOR = base;
-		return;
 	}
-	vec4 prev = texture(from_tex, UV);
-	COLOR = mix(prev, base, progress);
 }

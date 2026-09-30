@@ -43,6 +43,11 @@ func _ready() -> void:
 	# 根节点在场景里已是 full-rect 锚点，尺寸交给布局系统，不要手动设 size
 	mouse_filter = Control.MOUSE_FILTER_STOP
 	_build_ui()
+	# 小游戏是运行时实例化的，不在主场景树里，静态文案得自己翻一遍。
+	# 三个会随进度变的 label 已经由代码显式翻译，标记跳过防止二次处理。
+	for n in [_status_label, _feedback_label, _result_label]:
+		(n as Label).set_meta(I18n.META_SKIP, true)
+	I18n.apply_tree(self)
 	set_process(false)
 
 
@@ -115,7 +120,7 @@ func _judge() -> void:
 	if hit:
 		_hits += 1
 	_locked = true
-	_feedback_label.text = "命中！" if hit else "失手…"
+	_feedback_label.text = I18n.t("命中！") if hit else I18n.t("失手…")
 	_feedback_label.add_theme_color_override(
 		"font_color", UiTheme.SUCCESS if hit else UiTheme.DANGER)
 	_update_labels()
@@ -133,7 +138,10 @@ func _finish_now() -> void:
 	set_process(false)
 
 	var success := _hits >= _need
-	_result_label.text = "命中 %d / %d —— %s" % [_hits, _rounds, "通过" if success else "未通过"]
+	_result_label.text = I18n.t("命中 {hits} / {rounds} —— {verdict}", {
+		"hits": _hits, "rounds": _rounds,
+		"verdict": I18n.t("通过") if success else I18n.t("未通过"),
+	})
 	_result_label.add_theme_color_override(
 		"font_color", UiTheme.SUCCESS if success else UiTheme.DANGER)
 	_result_label.visible = true
@@ -150,8 +158,8 @@ func _finish_now() -> void:
 
 
 func _update_labels() -> void:
-	_status_label.text = "第 %d / %d 回合      命中 %d  （需 %d）" % [
-		_round_index, _rounds, _hits, _need]
+	_status_label.text = I18n.t("第 {i} / {rounds} 回合      命中 {hits}  （需 {need}）", {
+		"i": _round_index, "rounds": _rounds, "hits": _hits, "need": _need})
 
 
 func _update_visuals() -> void:

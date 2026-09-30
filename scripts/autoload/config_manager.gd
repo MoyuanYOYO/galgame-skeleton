@@ -19,6 +19,9 @@ const DEFAULTS := {
 	"voice_volume": 1.0,
 	"fullscreen": false,
 	"skip_unread": false,
+	"rollback_wheel": true,  # 滚轮上=回滚剧情，下=前进；关掉则滚轮上退回「打开回看」
+	"dim_read_text": false,  # 已读过的台词压暗显示，避免重读时认不出哪些看过
+	"language": "zh_CN",     # 界面语言，对应 data/i18n/<语言>.json
 }
 
 var data: Dictionary = {}

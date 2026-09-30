@@ -12,7 +12,7 @@ extends Control
 ##   滚轮上 / B —— 回看
 ##   A —— 自动播放    S —— 保存    L —— 读取
 
-const SCRIPT_ENTRY := "res://data/scripts/prologue.gvs"
+## 剧本文件位置由 ScriptPaths 统一决定（含语言子目录解析），这里不再写死
 const SKIP_INTERVAL_MS := 30
 const AUTOSAVE_BACKLOG_TAIL := 60
 ## 存档缩略图尺寸（16:9，够看清画面又不占体积）
@@ -20,6 +20,9 @@ const THUMB_WIDTH := 384
 const THUMB_HEIGHT := 216
 ## 自动存档抓缩略图的最小间隔
 const THUMB_INTERVAL_MS := 15000
+## 回滚历史保留的最大节点数。够翻好几章，又不至于把内存吃满 ——
+## 每份快照只有几百字节（软状态 + 画面摘要），100 份是几十 KB 量级。
+const ROLLBACK_CAPACITY := 100
 
 @onready var stage: Stage = %Stage
 @onready var dialogue: DialogueBox = %DialogueBox
@@ -77,6 +80,12 @@ var _replay_snapshot: Dictionary = {}
 ## 重播期间禁止写自动存档，否则会把玩家真实进度覆盖成片段里的位置
 var _autosave_enabled: bool = true
 
+## 回滚历史。每显示一句对白 / 弹一次选项就存一份快照，滚轮在历史里前后移动。
+var _rollback := RollbackBuffer.new(ROLLBACK_CAPACITY)
+## 正在从快照还原。还原会让调度器重新执行指令、再次触发 _on_say / _on_choices，
+## 这里置位把「采集快照」挡住 —— 否则每回滚一次就往历史里塞一条重复项。
+var _restoring: bool = false
+
 
 func _ready() -> void:
 	runner = ScriptRunner.new()
@@ -95,6 +104,7 @@ func _ready() -> void:
 	dialogue.voice_replay_requested.connect(_on_voice_replay)
 	choices.option_selected.connect(_on_option_selected)
 	save_load.slot_chosen.connect(_on_slot_chosen)
+	save_load.slots_changed.connect(_on_slots_changed)
 	gallery.cg_activated.connect(_on_cg_activated)
 	gallery.music_track_selected.connect(_on_music_track_selected)
 	gallery.closed.connect(_on_gallery_closed)
@@ -128,6 +138,11 @@ func _ready() -> void:
 		ui_layer.add_child(debug_console)
 
 	_style_hud()
+	# 界面文案翻译要在所有界面都建好之后、显示之前做一遍。
+	# 静态文案（写在 main.tscn 里的按钮 / 标签）由它统一替换，
+	# 代码里拼出来的那部分在各自的生成处显式调了 I18n.t()。
+	I18n.language_changed.connect(_on_language_changed)
+	I18n.apply_tree(ui_layer)
 	_show_title()
 	GameManager.tracking = false
 
@@ -209,7 +224,18 @@ func _unhandled_input(event: InputEvent) -> void:
 			get_viewport().set_input_as_handled()
 			return
 		if mb.button_index == MOUSE_BUTTON_WHEEL_UP:
-			_open_backlog()
+			# 滚轮向上 = 回退一句（galgame 的通用习惯）。
+			# 想换回旧行为（滚轮上打开回看）在设置里关掉「滚轮用于回滚剧情」。
+			if _wheel_rollback_enabled():
+				_rollback_step(-1)
+			else:
+				_open_backlog()
+			get_viewport().set_input_as_handled()
+			return
+		if mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+			# 向下 = 撤销一次回退（前进）。翻过头了不用怕。
+			if _wheel_rollback_enabled():
+				_rollback_step(1)
 			get_viewport().set_input_as_handled()
 			return
 
@@ -349,8 +375,13 @@ func _on_audio_command(cmd: Dictionary) -> void:
 		"voice":
 			# 记下来供「点名字牌重播」用。剧本里 voice 写在台词前面，
 			# _on_say 会把它认领成「这一句的语音」。
-			_pending_voice = String(cmd.get("id", ""))
-			AudioManager.play_voice(_pending_voice, float(cmd.get("volume", 1.0)))
+			var voice_id := String(cmd.get("id", ""))
+			# 同一句里连写多条 voice 时，_pending_voice 还是上一条 —— 说明它们
+			# 属于同一句，排队依次播完；已经跨过一句（_pending_voice 被认领掉了）
+			# 就直接打断，别让上一条语音拖到这句台词上。
+			var chained := not _pending_voice.is_empty()
+			_pending_voice = voice_id
+			AudioManager.play_voice(voice_id, float(cmd.get("volume", 1.0)), chained)
 
 
 func _on_say(speaker: String, text: String, _expr: String) -> void:
@@ -365,8 +396,11 @@ func _on_say(speaker: String, text: String, _expr: String) -> void:
 		_clear_minigame()
 	_last_speaker = speaker
 	_last_text = text
+	# 顺序要紧：先问「这句以前看过没有」，再去标记已读 ——
+	# 反过来的话「已读变暗」会把每一句都当成已读，包括第一次看到的那句。
+	var was_read := ReadTracker.is_read(text)
 	ReadTracker.mark_read(text)
-	dialogue.show_line(speaker, text)
+	dialogue.show_line(speaker, text, was_read)
 	# 认领这一句的语音：剧本里 voice 写在台词前面，这里把它收进来。
 	# 认领后清空 _pending_voice，下一句没写 voice 就不会误认领上一句的。
 	_line_voice = _pending_voice
@@ -375,6 +409,10 @@ func _on_say(speaker: String, text: String, _expr: String) -> void:
 	stage.focus_speaker(speaker)
 	_sync_visited_chapter()
 	_arm_auto_deadline()
+	# 记一份回滚快照。此刻 runner 正停在「等这句推进」上，
+	# get_state() 返回的 ip 正好指向这条 say 本身，回滚才能重新显示它。
+	if _may_record_history():
+		_rollback.push(_make_snapshot("say"))
 	# 每句对白都刷新自动存档。
 	# 只在选项处存是不够的：那样「继续游戏」永远只能回到上一个选项，
 	# 玩家在选项之后读的整段内容都会丢失。
@@ -382,15 +420,21 @@ func _on_say(speaker: String, text: String, _expr: String) -> void:
 
 
 func _on_line_logged(speaker: String, text: String) -> void:
+	# 回滚还原时调度器会重放这条 say，但它的回看记录本来就还在
+	# （快照里存了长度、并按此截断过），再记一次会多出一条重复对白。
+	if _restoring:
+		return
 	_backlog_entries.append({"speaker": speaker, "text": text})
 	if _backlog_entries.size() > BacklogPanel.MAX_ENTRIES:
 		_backlog_entries.remove_at(0)
 
 
 func _on_choices(options: Array) -> void:
-	_auto_mode = false
-	_skip_mode = false
-	_refresh_toggle_buttons()
+	_stop_auto_features()
+	# 选项也要留一份快照 —— 否则玩家选完就没法回退到「选项摊在面前」的状态
+	# 重新选。此处 runner 停在等选项上，ip 指向 choice 指令，还原会自动重弹选项。
+	if _may_record_history():
+		_rollback.push(_make_snapshot("choice"))
 	_autosave()
 	choices.present(options)
 
@@ -421,10 +465,8 @@ func _on_script_ended(ending_id: String, ending_title: String) -> void:
 		return
 
 	GameManager.tracking = false
-	_auto_mode = false
-	_skip_mode = false
+	_stop_auto_features()
 	choices.dismiss()
-	_refresh_toggle_buttons()
 
 	if not ending_id.is_empty():
 		GameManager.set_flag("ending_%s" % ending_id)
@@ -432,12 +474,12 @@ func _on_script_ended(ending_id: String, ending_title: String) -> void:
 		CollectionManager.unlock("endings", ending_id)
 		RouteTracker.save_now()
 
-	var message := "—— 完 ——"
+	var message := I18n.t("—— 完 ——")
 	if not ending_title.is_empty():
-		message = "结局：%s" % ending_title
+		message = I18n.t("结局：{title}", {"title": ending_title})
 	elif not ending_id.is_empty():
-		message = "结局：%s" % ending_id
-	message += "\n（点击任意位置返回标题）"
+		message = I18n.t("结局：{title}", {"title": ending_id})
+	message += "\n" + I18n.t("（点击任意位置返回标题）")
 	dialogue.show_line("", message)
 
 
@@ -457,6 +499,109 @@ func _on_advance_requested() -> void:
 
 
 # ---------------------------------------------------------------------------
+# 回滚（滚轮前后翻历史）
+# ---------------------------------------------------------------------------
+
+## 此刻是否该记一份回滚快照。
+##
+## 两种情况要挡住：
+##   · _restoring —— 还原过程中 runner 会重放指令，不挡就会记下重复项；
+##   · _replay_active —— CG 重播放的是一段「不属于玩家进度」的插叙，
+##     混进历史后玩家回退会退到一段他其实没走到的剧情里。
+func _may_record_history() -> bool:
+	return not _restoring and not _replay_active and runner != null
+
+
+func _wheel_rollback_enabled() -> bool:
+	return bool(ConfigManager.get_value("rollback_wheel", true))
+
+
+## 采集一份「当前这一句」的完整快照。
+##
+## 三类状态缺一不可：调度器位置（file / ip / call_stack）、软状态
+## （旗标 / 好感度 / 变量）、画面（背景 / 立绘 / CG / 天气）。
+## 回看记录只存长度 —— 整份存进去太占地方，还原时把尾巴截掉即可。
+func _make_snapshot(kind: String) -> Dictionary:
+	return {
+		"kind": kind,
+		"runner": runner.get_state(),
+		"game": GameManager.to_dict(),
+		"stage": stage.get_state(),
+		# 此刻正显示的那一句（选项快照里它就是「选项背后那句对白」）
+		"speaker": _last_speaker,
+		"text": _last_text,
+		"voice": _line_voice,
+		# 含这一句的长度；回滚时截回这个数，这一句恰好还在
+		"backlog_size": _backlog_entries.size(),
+	}
+
+
+## 沿历史前 / 后移动一格。direction < 0 回退、> 0 前进。
+## 返回是否真的动了 —— 撞到缓冲区两端就什么都不做。
+func _rollback_step(direction: int) -> bool:
+	if runner == null or title.visible or _replay_active:
+		return false
+	# 小游戏进行中翻历史会把小游戏节点和进度指针弄乱，直接拒绝
+	if runner.is_waiting_minigame():
+		return false
+	var snapshot: Dictionary = _rollback.back() if direction < 0 else _rollback.forward()
+	if snapshot.is_empty():
+		return false
+	_apply_snapshot(snapshot)
+	return true
+
+
+## 把一份快照还原成「这一句正在显示」的样子。
+##
+## 走的是和读档完全相同的路径：restore_state() 让调度器重新执行那条指令，
+## 对白 / 选项于是自己重新出现 —— 这里不用再去区分快照是 say 还是 choice。
+func _apply_snapshot(snapshot: Dictionary) -> void:
+	_stop_auto_features()
+
+	GameManager.from_dict(snapshot.get("game", {}))
+	stage.restore_state(snapshot.get("stage", {}))
+
+	# 回看记录截回那一句。快照存的是「含这一句」的长度，所以这一句保留、
+	# 它之后的全部丢掉。
+	var keep := int(snapshot.get("backlog_size", 0))
+	while _backlog_entries.size() > keep:
+		_backlog_entries.pop_back()
+
+	_last_speaker = String(snapshot.get("speaker", ""))
+	_last_text = String(snapshot.get("text", ""))
+	_line_voice = String(snapshot.get("voice", ""))
+	_pending_voice = ""
+
+	# 挡住这次还原引发的重放，别把快照重复记进去
+	_restoring = true
+	var ok := runner.restore_state(snapshot.get("runner", {}))
+	_restoring = false
+
+	if not ok:
+		# 剧本被删 / 改坏 —— 与其让指针悬在一个不存在的剧本上，不如退回标题
+		push_warning("[Rollback] 还原失败，返回标题")
+		_rollback.clear()
+		_back_to_title()
+		return
+
+	# restore_state() 只有撞上 say 才会重新弹对白；停在选项上时这里补回
+	# 那句上下文，玩家才看得懂自己在选什么。
+	if not runner.is_waiting_say() and not _last_text.is_empty():
+		dialogue.show_line(_last_speaker, _last_text)
+	# 还原到对白时，把可能残留的选项面板收起来 ——
+	# 从「选项格」退回「对白格」时它不会自己消失，会一直挡在前面。
+	if not runner.is_waiting_choice():
+		choices.dismiss()
+	# 回滚是「重看已经发生过的东西」，再走一遍打字机只会让人干等 —— 直接给全。
+	dialogue.complete_typing()
+
+
+## 调试控制台 / 测试用：清空回滚历史。
+func clear_rollback_history() -> void:
+	_rollback.clear()
+
+
+# ---------------------------------------------------------------------------
 # 小游戏
 # ---------------------------------------------------------------------------
 
@@ -468,9 +613,7 @@ func _on_minigame_requested(id: String, params: Dictionary) -> void:
 		return
 
 	dialogue.hide_box()
-	_auto_mode = false
-	_skip_mode = false
-	_refresh_toggle_buttons()
+	_stop_auto_features()
 
 	_clear_minigame()
 	_minigame_node = scene.instantiate()
@@ -541,9 +684,9 @@ func _on_cg_replay_requested(cg_id: String) -> void:
 	}
 	_replay_active = true
 	_autosave_enabled = false
-	_auto_mode = false
-	_skip_mode = false
-	_refresh_toggle_buttons()
+	# 重播是插叙，不是玩家进度的一部分 —— 历史清掉，免得混进正片
+	_rollback.clear()
+	_stop_auto_features()
 	GameManager.tracking = false
 
 	cg_viewer.hide_panel()
@@ -571,14 +714,12 @@ func _end_replay() -> void:
 	dialogue.hide_box()
 
 	# 还原快照
-	GameManager.from_dict(_replay_snapshot.get("game", {}))
-	stage.restore_state(_replay_snapshot.get("stage", {}))
-	_backlog_entries = []
-	for entry in _replay_snapshot.get("backlog", []):
-		if typeof(entry) == TYPE_DICTIONARY:
-			_backlog_entries.append(entry)
-	_last_speaker = String(_replay_snapshot.get("last_speaker", ""))
-	_last_text = String(_replay_snapshot.get("last_text", ""))
+	_restore_session(
+		_replay_snapshot.get("game", {}),
+		_replay_snapshot.get("stage", {}),
+		_replay_snapshot.get("backlog", []),
+		String(_replay_snapshot.get("last_speaker", "")),
+		String(_replay_snapshot.get("last_text", "")))
 	_replay_snapshot = {}
 
 	hud.visible = false
@@ -612,14 +753,15 @@ func _show_title() -> void:
 
 func _back_to_title() -> void:
 	runner.stop()
-	_auto_mode = false
-	_skip_mode = false
+	_stop_auto_features()
 	_replay_active = false
 	_replay_snapshot = {}
 	_autosave_enabled = true
+	# 语音 / 排队中的语音都要断掉，否则回到标题后还在念上一句
+	AudioManager.stop_voice()
+	_rollback.clear()
 	GameManager.tracking = false
 	_clear_minigame()
-	_refresh_toggle_buttons()
 	_show_title()
 
 
@@ -627,6 +769,7 @@ func _on_start_requested(file: String = "", label: String = "") -> void:
 	GameManager.reset_run()
 	stage.clear()
 	_backlog_entries.clear()
+	_rollback.clear()
 	_last_speaker = ""
 	_last_text = ""
 	_replay_active = false
@@ -654,7 +797,7 @@ func _on_load_requested() -> void:
 
 
 func _start_script(label: String = "", file: String = "") -> void:
-	var target := file if not file.is_empty() else SCRIPT_ENTRY
+	var target := file if not file.is_empty() else ScriptPaths.entry()
 	if not runner.load_script(target):
 		title.visible = false
 		hud.visible = true
@@ -674,6 +817,12 @@ func _start_script(label: String = "", file: String = "") -> void:
 
 func _open_save_load(load_mode: bool) -> void:
 	save_load.present(load_mode)
+
+
+## 存档被删掉 / 覆盖后，标题界面的「继续游戏」「读取存档」要跟着变灰或变亮。
+## 这两个按钮的状态原本只在回标题时算一次，删档后就对不上了。
+func _on_slots_changed() -> void:
+	title.set_save_available(SaveManager.newest_slot() >= 0)
 
 
 func _on_slot_chosen(slot: int) -> void:
@@ -724,30 +873,58 @@ func _build_payload() -> Dictionary:
 	}
 
 
+## 从一份会话数据恢复「软状态 + 画面 + 回看记录 + 最后一句」。
+##
+## 读档（数据来自存档文件）与重播结束（数据来自内存快照）做的是同一件事，
+## 只是来源不同 —— 之前两边各抄了一遍，改一处漏一处就会出现
+## 「读档能恢复、重播结束却丢了回看记录」这种只在一半路径上出现的问题。
+func _restore_session(game: Dictionary, stage_state: Dictionary, backlog: Array,
+		speaker: String, text: String) -> void:
+	GameManager.from_dict(game)
+	stage.restore_state(stage_state)
+	_backlog_entries = _sanitize_backlog(backlog)
+	_last_speaker = speaker
+	_last_text = text
+
+
+## 回看记录可能来自 JSON（读档）或内存快照，统一过一遍「是不是字典」的筛选。
+## 混进非字典元素不会立刻报错，但会在回看面板里变成一条空白行。
+static func _sanitize_backlog(raw: Array) -> Array:
+	var out: Array = []
+	for entry in raw:
+		if typeof(entry) == TYPE_DICTIONARY:
+			out.append(entry)
+	return out
+
+
 func _load_slot(slot: int) -> void:
 	var data := SaveManager.read_slot(slot)
 	if data.is_empty():
 		return
 
-	_auto_mode = false
-	_skip_mode = false
-	_refresh_toggle_buttons()
+	_stop_auto_features()
+	# 读档是一次「跳到别处」——旧的回滚历史全部作废，留着会让滚轮翻到
+	# 读档之前的进度之外
+	_rollback.clear()
 
-	GameManager.from_dict(data.get("game", {}))
-	stage.restore_state(data.get("stage", {}))
-	_backlog_entries = []
-	for entry in data.get("backlog", []):
-		if typeof(entry) == TYPE_DICTIONARY:
-			_backlog_entries.append(entry)
-	_last_speaker = String(data.get("speaker", ""))
-	_last_text = String(data.get("preview", ""))
+	_restore_session(
+		data.get("game", {}),
+		data.get("stage", {}),
+		data.get("backlog", []),
+		String(data.get("speaker", "")),
+		String(data.get("preview", "")))
 
 	title.visible = false
 	hud.visible = true
 	_close_modals()
 	choices.dismiss()
 
-	if not runner.restore_state(data.get("runner", {})):
+	# 用 _restoring 包住还原：调度器会重放该指令，不挡的话它会往刚恢复的
+	# 回看记录里再塞一条重复对白，也会往刚清空的回滚历史里塞一格。
+	_restoring = true
+	var restored := runner.restore_state(data.get("runner", {}))
+	_restoring = false
+	if not restored:
 		dialogue.show_line("", "读档失败：剧本文件缺失或已损坏。\n（点击任意位置返回标题）")
 		return
 
@@ -844,6 +1021,18 @@ func _may_skip_current() -> bool:
 	return ReadTracker.is_read(dialogue.get_full_text())
 
 
+## 切换语言：静态文案靠节点上记的原文重新查表，动态面板重建一次，
+## 让「存档 3」「已读 12 / 89 句」这类代码拼出来的文字也跟着换。
+func _on_language_changed(_lang: String) -> void:
+	I18n.apply_tree(ui_layer)
+	settings.rebuild()
+	if save_load != null and save_load.visible:
+		save_load.refresh()
+	if records != null and records.visible:
+		records.present()
+	_refresh_toggle_buttons()
+
+
 ## 隐藏 / 显示全部 UI（截图或纯欣赏画面用）
 func _toggle_ui_hidden() -> void:
 	_ui_hidden = not _ui_hidden
@@ -862,9 +1051,21 @@ func _arm_auto_deadline() -> void:
 	_auto_deadline_ms = Time.get_ticks_msec() + typing_ms + hold_ms
 
 
+## 关掉自动播放与快速跳过，并刷新 HUD 上那两个开关按钮的文字。
+##
+## 有七八处地方需要「停下来」：遇到选项、进小游戏、读档、回滚、回标题、进出重播……
+## 每处手抄这三行，漏一次就会出现「按钮显示开着、其实早就停了」这种对不上的状态。
+func _stop_auto_features() -> void:
+	_auto_mode = false
+	_skip_mode = false
+	_refresh_toggle_buttons()
+
+
 func _refresh_toggle_buttons() -> void:
-	_btn_auto.text = "自动（开）" if _auto_mode else "自动"
-	_btn_skip.text = "跳过（开）" if _skip_mode else "跳过"
+	# 用 set_text 而不是直接赋值：这两个按钮的文字会随状态变，
+	# 记下 key 才能在切语言时重新算（直接赋值会被 apply_tree 当成新原文）
+	I18n.set_text(_btn_auto, "自动（开）" if _auto_mode else "自动")
+	I18n.set_text(_btn_skip, "跳过（开）" if _skip_mode else "跳过")
 
 
 func _style_hud() -> void:

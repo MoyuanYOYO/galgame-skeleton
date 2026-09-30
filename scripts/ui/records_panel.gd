@@ -12,8 +12,9 @@ extends Control
 signal chapter_requested(file: String, label: String)
 signal closed()
 
-const PANEL_SIZE := Vector2(1420.0, 860.0)
-const ENDING_CARD := Vector2(240.0, 150.0)
+const PANEL_MARGIN_X := 70.0
+const PANEL_MARGIN_Y := 60.0
+const ENDING_CARD := Vector2(240.0, 116.0)
 const ENDING_COLUMNS := 4
 
 var _dim: ColorRect
@@ -25,27 +26,36 @@ var _body: VBoxContainer
 
 func _ready() -> void:
 	visible = false
-	set_anchors_preset(Control.PRESET_FULL_RECT)
+	# 这个面板由代码创建、直接挂在 CanvasLayer 下 —— 这种 Control 的锚点
+	# **拿不到视口尺寸**：set_anchors_preset(FULL_RECT) 之后 size 仍是由内容
+	# 撑出来的值（约 1422×890），于是「满屏面板」只占住左上角一块，
+	# 右边和下边各留一大片空 —— 这正是「记录界面没占全」的根因。
+	# 必须显式按视口设一次 offset，并跟着视口变化。
+	_fit_to_viewport()
+	if not get_viewport().size_changed.is_connected(_fit_to_viewport):
+		get_viewport().size_changed.connect(_fit_to_viewport)
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	_dim = ColorRect.new()
-	_dim.color = Color(0.02, 0.02, 0.05, 0.72)
+	# 和鉴赏面板用同一个遮罩色。面板满屏之后遮罩只露一圈边，
+	# 但那一圈的颜色不一致会一眼看出来。
+	_dim.color = Color(0.031, 0.027, 0.055, 0.94)
 	_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_dim)
 
-	var center := CenterContainer.new()
-	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	center.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(center)
-
+	# 面板铺满全屏，只留出与鉴赏面板相同的边距（两处风格保持一致）。
 	_panel = PanelContainer.new()
-	_panel.custom_minimum_size = PANEL_SIZE
+	_panel.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_panel.offset_left = PANEL_MARGIN_X
+	_panel.offset_top = PANEL_MARGIN_Y
+	_panel.offset_right = -PANEL_MARGIN_X
+	_panel.offset_bottom = -PANEL_MARGIN_Y
 	UiTheme.apply_panel(_panel, "default")
-	center.add_child(_panel)
+	add_child(_panel)
 
 	var outer := VBoxContainer.new()
-	outer.add_theme_constant_override("separation", 18)
+	outer.add_theme_constant_override("separation", 14)
 	_panel.add_child(outer)
 
 	outer.add_child(_make_header())
@@ -57,11 +67,42 @@ func _ready() -> void:
 
 	_body = VBoxContainer.new()
 	_body.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	_body.add_theme_constant_override("separation", 26)
+	_body.add_theme_constant_override("separation", 14)
 	scroll.add_child(_body)
 
 
+## 把自己撑满视口。
+##
+## 两个坑叠在一起，必须这么写：
+##
+## 1. CanvasLayer 不是 Control，挂在它下面的 Control **拿不到父级尺寸**；
+## 2. FULL_RECT 的左右（上下）锚点是**非等值**的，此时矩形由锚点位置 + offset
+##    共同决定 —— 写 `offset_right = 视口宽` 会得到「视口宽 + 视口宽」，
+##    面板直接被撑成两倍大（1920 的视口撑出 3840 的矩形）。
+##
+## 所以锚点全部固定在左上角（BEGIN），矩形**完全由 offset 决定**：
+## 这样不管父级是 CanvasLayer 还是普通 Control，尺寸都正好等于视口，
+## 也不会触发引擎那条「非等值锚点下 size 会被 offset 反推」的警告。
+func _fit_to_viewport() -> void:
+	var viewport := get_viewport()
+	if viewport == null:
+		return
+	var rect := viewport.get_visible_rect().size
+	set_anchors_preset(Control.PRESET_TOP_LEFT)
+	offset_left = 0.0
+	offset_top = 0.0
+	offset_right = rect.x
+	offset_bottom = rect.y
+
+
 func present() -> void:
+	# 每次打开都重新按视口校一次尺寸。
+	#
+	# 只在 _ready() 里校是不够的：_ready 可能比视口就绪更早 ——
+	# 实测那时 get_visible_rect() 读到的是 3840×2160，一帧之后才是真正的
+	# 1920×1080（同一现象在 debug_console 里也打印过）。玩家打开面板时
+	# 一定已经过了好几帧，在这里校一次才拿得到正确值。
+	_fit_to_viewport()
 	_rebuild()
 	visible = true
 
@@ -104,17 +145,33 @@ func _rebuild() -> void:
 	_body.add_child(_make_route_section())
 
 
+## 已读进度（**当前剧本口径**），返回 (已读句数, 总句数)。
+##
+## 分子不能用 ReadTracker.read_count()：那是全局去重计数（跨存档、跨剧本版本，
+## 连测试随手标的探针句子都算在内），而分母只是当前剧本的台词数。两者口径不同，
+## 直接相除会显示出「已读 150 / 62 句」这种分子大于分母的结果。
+## 公开出来也是为了让测试能直接断言这条不变式。
+static func read_progress() -> Vector2i:
+	return Vector2i(
+		ReadTracker.read_count_of(ScriptStats.line_texts()),
+		ScriptStats.total_lines())
+
+
 ## 顶部概览：已读率 + 结局进度
 func _make_progress_section() -> Control:
 	var box := VBoxContainer.new()
 	box.add_theme_constant_override("separation", 8)
 
-	var total := ScriptStats.total_lines()
-	var read := ReadTracker.read_count()
-	var rate := 0.0 if total <= 0 else minf(1.0, float(read) / float(total))
+	var progress := read_progress()
+	var total := progress.y
+	var read := progress.x
+	var rate := 0.0 if total <= 0 else float(read) / float(total)
 
 	var line := Label.new()
-	line.text = "已读 %d / %d 句（%.0f%%）" % [read, total, rate * 100.0]
+	line.set_meta(I18n.META_SKIP, true)
+	line.text = I18n.t("已读 {read} / {total} 句（{rate}%）", {
+		"read": read, "total": total, "rate": "%d" % roundi(rate * 100.0),
+	})
 	UiTheme.apply_label(line, UiTheme.TEXT, 22)
 	box.add_child(line)
 
@@ -170,7 +227,7 @@ func _make_chapter_section() -> Control:
 		button.custom_minimum_size = Vector2(360.0, 96.0)
 		button.text = "%s%s\n%s" % [
 			String(chapter.get("title", "")),
-			"" if visited else "（未读）",
+			"" if visited else I18n.t("（未读）"),
 			String(chapter.get("subtitle", "")),
 		]
 		button.disabled = not available
@@ -257,7 +314,7 @@ func _make_route_section() -> Control:
 		row.add_theme_constant_override("separation", 4)
 
 		var head := Label.new()
-		head.text = "%s · %s" % [file, label if not label.is_empty() else "（无标签）"]
+		head.text = "%s · %s" % [file, label if not label.is_empty() else I18n.t("（无标签）")]
 		UiTheme.apply_label(head, UiTheme.TEXT_DIM, 18)
 		row.add_child(head)
 
@@ -272,7 +329,9 @@ func _make_route_section() -> Control:
 		box.add_child(row)
 
 	var summary := Label.new()
-	summary.text = "共 %d 个选项点，走过 %d 个" % [choices.size(), picked_total]
+	summary.set_meta(I18n.META_SKIP, true)
+	summary.text = I18n.t("共 {total} 个选项点，走过 {picked} 个",
+		{"total": choices.size(), "picked": picked_total})
 	UiTheme.apply_label(summary, UiTheme.TEXT_DIM, 19)
 	box.add_child(summary)
 	return box

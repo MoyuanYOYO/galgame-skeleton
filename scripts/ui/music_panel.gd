@@ -41,6 +41,9 @@ func _ready() -> void:
 	_prev.pressed.connect(func() -> void: _step_track(-1))
 	_next.pressed.connect(func() -> void: _step_track(1))
 	_play.pressed.connect(_on_play_pressed)
+	# 曲名 / 艺术家 / 时间是内容，不参与界面翻译
+	for n in [_track_list, _now_playing, _artist, _time]:
+		(n as Control).set_meta(I18n.META_SKIP, true)
 	refresh()
 
 
@@ -239,13 +242,13 @@ func _update_controls() -> void:
 	_play.disabled = playable.is_empty()
 
 	if not has_track:
-		_play.text = GalleryTheme.label("play_button", "播放")
+		I18n.set_text(_play, GalleryTheme.label("play_button", "播放"))
 		_disc_spin(false)
 		return
 
 	var paused := AudioManager.is_bgm_paused()
-	_play.text = GalleryTheme.label("play_button", "播放") if paused \
-		else GalleryTheme.label("pause_button", "暂停")
+	I18n.set_text(_play, GalleryTheme.label("play_button", "播放") if paused \
+		else GalleryTheme.label("pause_button", "暂停"))
 	# 只要选中了曲目且没暂停就让唱片转 —— 即使当前没有对应音频文件
 	# （骨架阶段），唱片静止会让人以为播放器坏了。
 	_disc_spin(not paused)

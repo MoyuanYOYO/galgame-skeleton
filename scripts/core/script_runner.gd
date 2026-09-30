@@ -69,11 +69,14 @@ func _ready() -> void:
 # ---------------------------------------------------------------------------
 
 func load_script(path: String) -> bool:
-	if not FileAccess.file_exists(path):
+	# 真正读文件时才解析语言子目录；_current_file 始终记**逻辑路径**，
+	# 这样存档、章节匹配、路线图的比较都不会因为换语言而对不上。
+	var actual := ScriptPaths.resolve(path)
+	if not FileAccess.file_exists(actual):
 		push_error("[GVS] 剧本文件不存在: %s" % path)
 		parse_errors = ["剧本文件不存在: %s" % path]
 		return false
-	var file := FileAccess.open(path, FileAccess.READ)
+	var file := FileAccess.open(actual, FileAccess.READ)
 	if file == null:
 		push_error("[GVS] 无法打开剧本: %s" % path)
 		parse_errors = ["无法打开剧本: %s" % path]

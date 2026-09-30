@@ -39,6 +39,7 @@ static func audit() -> Dictionary:
 	var all_labels := {}        # 文件 -> {标签: true}
 	var referenced := {}        # 文件 -> {标签: true}（被 jump/call/choice 指向的）
 	var referenced_files := {}
+	var set_flags := {}         # 剧本里所有被 flag 指令置位过的旗标名
 
 	# 重播片段的起止标签也是「入口」—— 它们由 cg.json 的 replay 字段引用，
 	# 剧本里没人跳转过去，但绝不是死代码
@@ -116,9 +117,20 @@ static func audit() -> Dictionary:
 						ending_owner[id] = file_name
 					if not CollectionRegistry.has_item("endings", id):
 						warnings.append("结局 %s 没登记进 endings.json，玩家看不到它" % id)
+				"flag":
+					set_flags[String(cmd.get("name", ""))] = true
 				"say":
 					if String(cmd.get("text", "")).strip_edges().is_empty():
 						warnings.append("%s：有一句空台词" % file_name)
+
+	# 章节声明了 unlock_flag，却没有任何 flag 指令会设置它 —— 那一章永远选不了。
+	# 和「解析器认识、调度器不转发」是同一类问题：配置写好了，但没人执行。
+	for entry in ScriptStats.chapters():
+		var unlock_flag := String((entry as Dictionary).get("unlock_flag", ""))
+		if unlock_flag.is_empty() or set_flags.has(unlock_flag):
+			continue
+		warnings.append("章节「%s」的 unlock_flag %s 没有任何 flag 指令会设置它，这一章永远解锁不了"
+			% [String((entry as Dictionary).get("title", "")), unlock_flag])
 
 	# 跳转目标文件是否存在
 	for file_name in referenced_files.keys():
