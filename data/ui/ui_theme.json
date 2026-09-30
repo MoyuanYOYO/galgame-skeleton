@@ -1,0 +1,119 @@
+{
+  "_comment": "全局界面外观配置。改这个文件就能换配色、字体、按钮尺寸与按钮贴图 —— 不需要动一行代码。缺失的键会自动回退到内置默认值。",
+
+  "fonts": {
+    "_comment": "留空则用 Godot 内置默认字体。支持 .ttf / .otf / .woff2，放在 assets/fonts/ 下。",
+    "body": "",
+    "title": "",
+    "dialogue": ""
+  },
+
+  "font_sizes": {
+    "title": 78,
+    "subtitle": 24,
+    "heading": 30,
+    "dialogue": 30,
+    "speaker": 26,
+    "backlog": 28,
+    "button": 24,
+    "label": 22,
+    "small": 20
+  },
+
+  "palette": {
+    "bg_deep": "#141221",
+    "panel_bg": "#1e1b33",
+    "panel_bg_soft": "#252040",
+    "name_plate": "#352e5a",
+    "border": "#6c63c9",
+    "text": "#ece9ff",
+    "text_dim": "#a9a3d0",
+    "accent": "#7f77dd",
+    "accent_bright": "#9a93ec",
+    "speaker": "#f1c774",
+    "danger": "#e26d6d",
+    "success": "#71c89c"
+  },
+
+  "audio": {
+    "_comment": "按钮音效。留空则不播。按钮预设里可用 sfx_click / sfx_hover 单独覆盖，或写 \"sfx\": false 让这类按钮静音。",
+    "click": "ui_click",
+    "hover": "ui_hover",
+    "click_volume": 0.7,
+    "hover_volume": 0.3
+  },
+
+  "buttons": {
+    "_comment": "按钮预设。texture 为空则用程序化圆角矩形；填了路径就用九宫格贴图。texture_margin 是九宫格切边（像素）。",
+    "_texture_note": "可分别给 normal / hover / pressed / disabled 配贴图；只配 texture 时，其余状态用同一张贴图加色调区分。",
+
+    "title": {
+      "width": 340, "height": 68,
+      "font_size": 26, "radius": 10,
+      "pad_h": 24, "pad_v": 12,
+      "texture": "res://assets/ui/button_gold.png",
+      "texture_hover": "", "texture_pressed": "", "texture_disabled": "",
+      "texture_margin": 18,
+      "font_color": "#3a2708",
+      "font_hover_color": "#1f1402",
+      "font_pressed_color": "#1f1402",
+      "font_disabled_color": "#6f6350"
+    },
+    "choice": {
+      "width": 760, "height": 68,
+      "font_size": 26, "radius": 10,
+      "pad_h": 24, "pad_v": 12,
+      "texture": "", "texture_margin": 14
+    },
+    "hud": {
+      "width": 0, "height": 46,
+      "font_size": 20, "radius": 9,
+      "pad_h": 20, "pad_v": 10,
+      "texture": "", "texture_margin": 12
+    },
+    "track": {
+      "width": 0, "height": 52,
+      "font_size": 20, "radius": 10,
+      "pad_h": 22, "pad_v": 12,
+      "texture": "", "texture_margin": 12
+    },
+    "default": {
+      "width": 0, "height": 46,
+      "font_size": 22, "radius": 10,
+      "pad_h": 24, "pad_v": 12,
+      "texture": "", "texture_margin": 12
+    },
+    "small": {
+      "width": 0, "height": 40,
+      "font_size": 20, "radius": 9,
+      "pad_h": 20, "pad_v": 10,
+      "texture": "", "texture_margin": 12
+    }
+  },
+
+  "panels": {
+    "default": { "radius": 16, "border_width": 1, "pad_h": 0, "pad_v": 0 },
+    "gallery": { "radius": 20, "border_width": 1, "pad_h": 0, "pad_v": 0 },
+    "viewer":  { "radius": 20, "border_width": 1, "pad_h": 0, "pad_v": 0 }
+  },
+
+  "stage": {
+    "_comment": "演出层参数。多立绘同框时，非说话人会被压暗到 dim_inactive 这个亮度。",
+    "dim_inactive": 0.55,
+    "dim_duration": 0.22
+  },
+
+  "dialogue": {
+    "_comment": "对话框的位置与内边距。offset 是相对锚点（底边）的偏移，单位是设计分辨率像素。",
+    "offset_left": 130,
+    "offset_right": -130,
+    "offset_top": -320,
+    "offset_bottom": -70,
+    "radius": 18,
+    "border_width": 1,
+    "pad_h": 46,
+    "pad_v": 30,
+    "name_pad_h": 24,
+    "name_pad_v": 6
+  }
+}

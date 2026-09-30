@@ -1,0 +1,64 @@
+{
+  "_comment": "CG 收藏品注册表。id 用于剧本 cg 指令与解锁记录；replay 定义点击「重播剧情」时跳转的片段（起止标签界定，重播不会污染玩家进度）。",
+
+  "items": [
+    {
+      "id": "cg_classroom",
+      "title": "教室·清晨",
+      "hint": "序章 · 新学期第一天",
+      "image": "res://assets/cg/cg_classroom.png",
+      "replay": {
+        "file": "res://data/scripts/prologue.gvs",
+        "label": "cg_classroom",
+        "end_label": "cg_classroom_end"
+      }
+    },
+    {
+      "id": "cg_rooftop",
+      "title": "天台·黄昏",
+      "hint": "序章 · 放学后",
+      "image": "res://assets/cg/cg_rooftop.png",
+      "replay": {
+        "file": "res://data/scripts/prologue.gvs",
+        "label": "cg_rooftop",
+        "end_label": "cg_rooftop_end"
+      }
+    },
+    {
+      "id": "cg_street",
+      "title": "放学路上",
+      "hint": "第一章 · 校门口",
+      "image": "res://assets/cg/cg_street.png",
+      "replay": {
+        "file": "res://data/scripts/chapter1.gvs",
+        "label": "cg_street",
+        "end_label": "cg_street_end"
+      }
+    },
+    {
+      "id": "cg_true_end",
+      "title": "春日的答案",
+      "hint": "第一章 · 真结局",
+      "image": "res://assets/cg/cg_true_end.png",
+      "replay": {
+        "file": "res://data/scripts/chapter1.gvs",
+        "label": "cg_true_end",
+        "end_label": "cg_true_end_end"
+      }
+    },
+    {
+      "id": "cg_secret_01",
+      "title": "？？？",
+      "hint": "隐藏 · 尚未发现",
+      "image": "res://assets/cg/cg_secret_01.png",
+      "replay": {}
+    },
+    {
+      "id": "cg_secret_02",
+      "title": "？？？",
+      "hint": "隐藏 · 尚未发现",
+      "image": "res://assets/cg/cg_secret_02.png",
+      "replay": {}
+    }
+  ]
+}

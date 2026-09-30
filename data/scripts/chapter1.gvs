@@ -1,0 +1,82 @@
+# =====================================================================
+#  第一章 —— 演示跨文件跳转、变量累计与多结局
+#  由 prologue.gvs 的 jump_file 指令进入
+# =====================================================================
+
+label chapter1_start
+
+chapter 第一章 · 春日的答案
+set chapter 1
+clear
+
+# ------------------------------------------------- 可重播片段：放学路 CG
+label cg_street
+bg street fade=1.0
+bgm sunset volume=0.6 fade=1.2
+cg cg_street fade=0.9
+
+narr 第二天放学，校门口。夕阳把两个人的影子拉得很长。
+label cg_street_end
+hide_cg fade=0.6
+
+show alice expr=smile at=center fade=0.6
+alice: 你迟到了三分钟。
+bob: 精确到分钟吗……
+
+if flag rhythm_qte_cleared
+    alice@smile: 不过，看在你昨天全对的份上，原谅你了。
+else
+    alice@angry: 昨天那道题，你到现在还没想明白吧。
+end
+
+narr ——走到半路，她忽然停下了脚步。
+alice@normal: 我有件事想问你。
+
+choice
+    "「你说。」" -> ask_listen
+    "「边走边说吧。」" -> ask_walk
+end
+
+label ask_listen
+affection alice 6
+alice@smile: ……谢谢你愿意听。
+jump chapter1_merge
+
+label ask_walk
+affection alice -2
+alice@normal: 也是，站着说话确实有点傻。
+jump chapter1_merge
+
+label chapter1_merge
+
+narr 她沉默了一会儿。
+
+if affection alice >= 25
+    jump cg_true_end
+elif affection alice >= 10
+    jump ending_normal
+else
+    jump ending_bad
+end
+
+# ------------------------------------------------- 可重播片段：真结局 CG
+# 这个标签一物两用：正常流程从这里走进结局，鉴赏里也拿它当重播起点。
+# 重播会在 cg_true_end_end 处停下，因此不会真的触发 ending 与 unlock。
+label cg_true_end
+alice@smile: 其实……我一直觉得，和你在一起的时候最轻松。
+affection alice 10
+cg cg_true_end fade=1.0
+narr 夕阳把两个人的影子拉在一起，很长很长。
+label cg_true_end_end
+hide_cg fade=0.8
+unlock cg cg_secret_01
+unlock music theme
+ending true_end "春日的答案"
+
+label ending_normal
+alice@normal: 没什么，下次再说吧。
+ending normal "留到下个春天"
+
+label ending_bad
+alice@normal: ……算了，没什么。
+ending bad "说不出口的话"

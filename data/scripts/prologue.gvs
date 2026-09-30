@@ -1,0 +1,210 @@
+# =====================================================================
+#  序章 —— GVS 剧本语言演示
+# ---------------------------------------------------------------------
+#  · 注释用 #
+#  · 对白    角色id: 文本
+#  · 带表情  角色id@表情: 文本
+#  · 旁白    narr 文本      或直接写 "文本"
+#  · 条件块  if / elif / else / end
+#  · 选项块  choice ... end ，每条写成  "选项文本" -> 标签
+#  · CG      cg <id> 展示并解锁；hide_cg 收起
+#  · 重播    用成对标签 cg_xxx / cg_xxx_end 界定可重播片段，
+#            在 data/collection/cg.json 的 replay 里引用它们
+# =====================================================================
+
+label start
+
+chapter 序章 · 新学期
+
+# --------------------------------------------------- 可重播片段：教室 CG
+label cg_classroom
+bg classroom fade=0.8
+bgm daily volume=0.7 fade=1.5
+cg cg_classroom fade=0.9
+
+narr 四月的风从半开的窗户灌进来，把讲台上的粉笔灰吹成一片模糊的白。
+narr 新学期第一天，教室里弥漫着一种还没睡醒的安静。
+label cg_classroom_end
+hide_cg fade=0.6
+
+# ------------------------------------------- 文字特效演示（整段可删）
+# 特效标记直接写在台词里。完整清单见 README「文字特效」一节。
+narr [bounce height=13]弹跳[/bounce] · [blink]闪烁[/blink] · [glitch strength=5]错乱[/glitch] · [rainbow]变色[/rainbow]
+narr 这一句[speed=3]三倍速冲过去[/speed]，然后[wait=0.9]停顿一下，再恢复正常速度。
+
+show alice expr=normal at=left fade=0.5
+alice: 早上好。
+alice: ……你怎么一副没睡醒的样子。
+
+show bob expr=normal at=right fade=0.4
+bob: 早。我昨晚把新出的那款游戏打通了。
+alice@smile: 又是游戏。
+alice@normal: 你倒是挺有精神的嘛。
+
+# ------------------------------------------- 立绘 / 画面动效演示（整段可删）
+hop bob height=46 times=2 duration=0.8
+narr ——兴奋地原地蹦了两下。
+
+zoom bob 1.25 duration=0.5
+narr ——凑近了。（脚底不动，往上长）
+
+shake bob strength=40 times=6 duration=0.6
+narr ——抖了抖。
+
+zoom bob 1.0 duration=0.35 ease=out_cubic
+narr ——退回去。
+
+move bob left duration=1.0 ease=in_cubic
+narr ——带着加速度溜走了。（in_cubic 是越走越快，不是匀速）
+
+hide bob fade=0.5
+
+screen_shake strength=48 times=6 duration=0.6
+screen_flash color=#ffffff duration=0.35
+narr ——画面剧烈震了一下，同时闪了白光。（对话框也会跟着抖）
+
+show bob expr=normal at=right fade=0.4
+
+# ------------------------------------------- 转场 / 滑入 / 多立绘（整段可删）
+bg rooftop type=dissolve fade=0.9
+narr ——溶解转场。（按噪声阈值逐块显现）
+
+bg classroom type=wipe fade=0.8
+narr ——横向擦除。
+
+bg rooftop type=blinds fade=0.9
+narr ——百叶窗。
+
+bg classroom type=circle fade=0.9
+narr ——圆形扩散。
+
+hide alice fade=0.3
+hide bob fade=0.3
+show alice expr=smile at=left type=slide_left fade=0.6
+show bob expr=normal at=right type=slide_right fade=0.6
+narr ——两个人从两侧滑进来。
+
+alice: 我说话的时候，bob 会被压暗。
+bob: 轮到我说话，就换我亮着。
+narr ——旁白时两个人都恢复明亮。
+
+# ------------------------------------------- 天气 / 运镜 / 表情 / 语音（整段可删）
+bg rooftop type=dissolve fade=0.6
+weather snow intensity=1.0
+bg_motion scale=1.10 y=-14 duration=8.0 ease=in_out_cubic
+narr ——下雪了，镜头在极缓慢地推近。（静止的背景看久了很闷）
+
+weather rain intensity=0.8
+narr ——换成雨。
+
+weather sakura intensity=0.7
+narr ——换成樱花。
+
+weather none
+bg_motion scale=1.0 duration=2.0
+narr ——收工。
+
+expr alice smile fade=0.35
+narr ——表情切换是交叉混合，不是硬换图。
+expr alice normal fade=0.35
+
+# 演示段要把舞台还原回原样，不然会给后面的剧情留下副作用
+bg classroom type=fade fade=0.5
+
+# voice alice_001
+# 有语音素材时把上面这行打开：播完之后点说话人名字牌可以重播。
+# 语音文件放 assets/audio/voice/<id>.ogg，和音效用同一套命名规则。
+
+# ------------------------------------------------------------ 选项分支
+choice
+    "「游戏也是艺术。」" -> defend_games
+    "「……我错了。」" -> admit_fault
+end
+
+label defend_games
+bob: 游戏也是艺术。
+alice@angry: 那你倒是先把作业写完呀。
+affection alice 5
+set var stance "defend"
+jump after_choice
+
+label admit_fault
+bob: ……我错了。
+alice@smile: 知道就好。
+affection alice 12
+set var stance "yield"
+jump after_choice
+
+label after_choice
+flag talked_to_alice
+
+# ------------------------------------------------------------ 条件块
+if affection alice >= 10
+    alice@smile: ……不过，你今天倒是挺老实的。
+else
+    alice@normal: 算了，快点坐下吧。
+end
+
+if var stance == "yield"
+    narr 她似乎心情不错，连翻书的动作都轻快了几分。
+end
+
+# ------------------------------------------------------------ 小游戏
+se bell
+narr 上课铃响了。
+alice: 第一节课是随堂小测。
+bob: 别看我，我也没复习。
+alice@angry: [shake rate=14 level=5]你们两个！[/shake]
+
+narr ——需要在节奏里准确按下答案。
+minigame rhythm_qte rounds=5 need=3 speed=1.5
+
+if flag rhythm_qte_cleared
+    alice@smile: 不错嘛，居然全对了。
+    affection alice 8
+else
+    alice@angry: ……你把答案填串行了。
+    affection alice -5
+end
+
+# --------------------------------------------------- 可重播片段：天台 CG
+# 片段里 call 了一个定义在终点之后的子过程 —— 重播时靠调用栈守卫，
+# 才不会把「跳进子过程」误判成「已经播完」。
+label cg_rooftop
+bg rooftop fade=1.0
+hide bob fade=0.4
+move alice center fade=0.8
+bgm sunset volume=0.6 fade=1.5
+cg cg_rooftop fade=0.9
+
+narr 放学后，天台。夕阳把栏杆的影子拉得很长。
+
+call common_pause
+
+alice@normal: 那个……[wait=0.7]
+zoom alice 1.12 duration=0.5 ease=out_cubic
+alice@smile: 明天，[speed=2.5]要不要一起走？[/speed]
+label cg_rooftop_end
+hide_cg fade=0.6
+
+choice
+    "「好啊。」" -> ending_together
+    "「我明天有事。」" -> ending_alone
+end
+
+# ------------------------------------------------------------ 子过程
+label common_pause
+wait 0.6
+narr （风停了一瞬。）
+return
+
+# ------------------------------------------------------------ 结局
+label ending_together
+alice@smile: 那就说定了。
+affection alice 15
+flag route_together
+jump_file res://data/scripts/chapter1.gvs chapter1_start
+
+label ending_alone
+alice@normal: ……这样啊。那，明天见。
+ending prologue_alone "一个人的楼梯"

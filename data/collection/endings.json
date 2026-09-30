@@ -1,0 +1,30 @@
+{
+  "_comment": "结局收集注册表。id 与剧本 ending 指令的第一个参数一一对应，必须全局唯一 —— 两个不同结局用同一个 id 会互相覆盖解锁记录。",
+
+  "items": [
+    {
+      "id": "prologue_alone",
+      "title": "一个人的楼梯",
+      "hint": "序章 · 岔开了她的邀请",
+      "image": "res://assets/cg/cg_rooftop.png"
+    },
+    {
+      "id": "true_end",
+      "title": "春日的答案",
+      "hint": "第一章 · 说出了想说的话",
+      "image": "res://assets/cg/cg_secret_01.png"
+    },
+    {
+      "id": "normal",
+      "title": "留到下个春天",
+      "hint": "第一章 · 话到嘴边又咽了回去",
+      "image": "res://assets/cg/cg_rooftop.png"
+    },
+    {
+      "id": "bad",
+      "title": "说不出口的话",
+      "hint": "第一章 · 沉默到最后",
+      "image": "res://assets/cg/cg_classroom.png"
+    }
+  ]
+}

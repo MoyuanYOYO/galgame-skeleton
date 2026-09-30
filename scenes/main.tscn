@@ -1,0 +1,701 @@
+[gd_scene load_steps=12 format=3]
+
+[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/stage/stage.gd" id="2_stage"]
+[ext_resource type="Script" path="res://scripts/ui/dialogue_box.gd" id="3_dialogue"]
+[ext_resource type="Script" path="res://scripts/ui/choice_panel.gd" id="4_choice"]
+[ext_resource type="Script" path="res://scripts/ui/backlog_panel.gd" id="5_backlog"]
+[ext_resource type="Script" path="res://scripts/ui/settings_panel.gd" id="6_settings"]
+[ext_resource type="Script" path="res://scripts/ui/save_load_panel.gd" id="7_saveload"]
+[ext_resource type="Script" path="res://scripts/ui/title_screen.gd" id="8_title"]
+[ext_resource type="Script" path="res://scripts/ui/gallery_panel.gd" id="9_gallery"]
+[ext_resource type="Script" path="res://scripts/ui/music_panel.gd" id="10_music"]
+[ext_resource type="Script" path="res://scripts/ui/cg_viewer.gd" id="11_cgviewer"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("1_main")
+
+[node name="StageLayer" type="CanvasLayer" parent="."]
+layer = 0
+
+[node name="Stage" type="Control" parent="StageLayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("2_stage")
+
+[node name="UILayer" type="CanvasLayer" parent="."]
+layer = 10
+
+[node name="DialogueBox" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("3_dialogue")
+
+[node name="Box" type="PanelContainer" parent="UILayer/DialogueBox"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 12
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 130.0
+offset_top = -320.0
+offset_right = -130.0
+offset_bottom = -70.0
+grow_horizontal = 2
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/DialogueBox/Box"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 14
+
+[node name="NameRow" type="HBoxContainer" parent="UILayer/DialogueBox/Box/VBox"]
+layout_mode = 2
+mouse_filter = 2
+
+[node name="NamePlate" type="PanelContainer" parent="UILayer/DialogueBox/Box/VBox/NameRow"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 0
+mouse_filter = 2
+
+[node name="NameLabel" type="Label" parent="UILayer/DialogueBox/Box/VBox/NameRow/NamePlate"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+text = "角色名"
+
+[node name="TextLabel" type="RichTextLabel" parent="UILayer/DialogueBox/Box/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+bbcode_enabled = true
+scroll_active = false
+
+[node name="Indicator" type="Control" parent="UILayer/DialogueBox"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 3
+anchor_left = 1.0
+anchor_top = 1.0
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = -190.0
+offset_top = -132.0
+offset_right = -160.0
+offset_bottom = -110.0
+grow_horizontal = 0
+grow_vertical = 0
+mouse_filter = 2
+
+[node name="ChoicePanel" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("4_choice")
+
+[node name="Center" type="CenterContainer" parent="UILayer/ChoicePanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="ChoiceList" type="VBoxContainer" parent="UILayer/ChoicePanel/Center"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 20
+alignment = 1
+
+[node name="HudBar" type="HBoxContainer" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 1
+anchors_preset = 1
+anchor_left = 1.0
+anchor_right = 1.0
+offset_left = -640.0
+offset_top = 26.0
+offset_right = -26.0
+offset_bottom = 80.0
+grow_horizontal = 0
+theme_override_constants/separation = 12
+alignment = 2
+
+[node name="BtnAuto" type="Button" parent="UILayer/HudBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "自动"
+
+[node name="BtnSkip" type="Button" parent="UILayer/HudBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "跳过"
+
+[node name="BtnBacklog" type="Button" parent="UILayer/HudBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "回看"
+
+[node name="BtnSave" type="Button" parent="UILayer/HudBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "存档"
+
+[node name="BtnLoad" type="Button" parent="UILayer/HudBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "读档"
+
+[node name="BtnSettings" type="Button" parent="UILayer/HudBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "设置"
+
+[node name="BtnTitle" type="Button" parent="UILayer/HudBar"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "标题"
+
+[node name="TitleScreen" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("8_title")
+
+[node name="Dim" type="ColorRect" parent="UILayer/TitleScreen"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.055, 0.05, 0.098, 1)
+
+[node name="Center" type="CenterContainer" parent="UILayer/TitleScreen"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/TitleScreen/Center"]
+layout_mode = 2
+mouse_filter = 2
+theme_override_constants/separation = 18
+alignment = 1
+
+[node name="TitleLabel" type="Label" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+text = "GALGAME SKELETON"
+horizontal_alignment = 1
+
+[node name="SubtitleLabel" type="Label" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+text = "Godot 4 视觉小说工程骨架"
+horizontal_alignment = 1
+
+[node name="Spacer" type="Control" parent="UILayer/TitleScreen/Center/VBox"]
+custom_minimum_size = Vector2(0, 40)
+layout_mode = 2
+mouse_filter = 2
+
+[node name="StartButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "开始游戏"
+
+[node name="ContinueButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "继续游戏"
+
+[node name="LoadButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "读取存档"
+
+[node name="GalleryButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "鉴 赏"
+
+[node name="RecordsButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "记 录"
+
+[node name="SettingsButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "设置"
+
+[node name="QuitButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "退出"
+
+[node name="BacklogPanel" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("5_backlog")
+
+[node name="Dim" type="ColorRect" parent="UILayer/BacklogPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.031, 0.027, 0.055, 0.88)
+
+[node name="Panel" type="PanelContainer" parent="UILayer/BacklogPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 300.0
+offset_top = 100.0
+offset_right = -300.0
+offset_bottom = -100.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/BacklogPanel/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 18
+
+[node name="Header" type="Label" parent="UILayer/BacklogPanel/Panel/VBox"]
+layout_mode = 2
+mouse_filter = 2
+text = "回顾"
+
+[node name="BacklogScroll" type="ScrollContainer" parent="UILayer/BacklogPanel/Panel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="Entries" type="VBoxContainer" parent="UILayer/BacklogPanel/Panel/VBox/BacklogScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 16
+
+[node name="BacklogClose" type="Button" parent="UILayer/BacklogPanel/Panel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 4
+text = "关闭"
+
+[node name="SettingsPanel" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("6_settings")
+
+[node name="Dim" type="ColorRect" parent="UILayer/SettingsPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.031, 0.027, 0.055, 0.88)
+
+[node name="Panel" type="PanelContainer" parent="UILayer/SettingsPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 460.0
+offset_top = 170.0
+offset_right = -460.0
+offset_bottom = -170.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 22
+
+[node name="Header" type="Label" parent="UILayer/SettingsPanel/Panel/VBox"]
+layout_mode = 2
+mouse_filter = 2
+text = "设置"
+
+[node name="SettingsRows" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 20
+
+[node name="ButtonRow" type="HBoxContainer" parent="UILayer/SettingsPanel/Panel/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 16
+alignment = 2
+
+[node name="SettingsReset" type="Button" parent="UILayer/SettingsPanel/Panel/VBox/ButtonRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "恢复默认"
+
+[node name="SettingsClose" type="Button" parent="UILayer/SettingsPanel/Panel/VBox/ButtonRow"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "关闭"
+
+[node name="SaveLoadPanel" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("7_saveload")
+
+[node name="Dim" type="ColorRect" parent="UILayer/SaveLoadPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.031, 0.027, 0.055, 0.88)
+
+[node name="Panel" type="PanelContainer" parent="UILayer/SaveLoadPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 420.0
+offset_top = 110.0
+offset_right = -420.0
+offset_bottom = -110.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/SaveLoadPanel/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 20
+
+[node name="SaveLoadTitle" type="Label" parent="UILayer/SaveLoadPanel/Panel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+text = "存档"
+
+[node name="SaveLoadScroll" type="ScrollContainer" parent="UILayer/SaveLoadPanel/Panel/VBox"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="SlotList" type="VBoxContainer" parent="UILayer/SaveLoadPanel/Panel/VBox/SaveLoadScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 14
+
+[node name="SaveLoadClose" type="Button" parent="UILayer/SaveLoadPanel/Panel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 4
+text = "关闭"
+
+[node name="GalleryPanel" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("9_gallery")
+
+[node name="Dim" type="ColorRect" parent="UILayer/GalleryPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.031, 0.027, 0.055, 0.94)
+
+[node name="Panel" type="PanelContainer" parent="UILayer/GalleryPanel"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 70.0
+offset_top = 60.0
+offset_right = -70.0
+offset_bottom = -60.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 18
+
+[node name="Header" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 14
+
+[node name="GalleryTitle" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+text = "鉴 赏"
+
+[node name="GalleryProgress" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+mouse_filter = 2
+vertical_alignment = 1
+text = "收集进度"
+
+[node name="TabCg" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "CG 鉴赏"
+
+[node name="TabMusic" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "音乐鉴赏"
+
+[node name="GalleryClose" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "关闭"
+
+[node name="CgScroll" type="ScrollContainer" parent="UILayer/GalleryPanel/Panel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="CgGrid" type="GridContainer" parent="UILayer/GalleryPanel/Panel/VBox/CgScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/h_separation = 22
+theme_override_constants/v_separation = 22
+columns = 3
+
+[node name="MusicRoot" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 14
+script = ExtResource("10_music")
+
+[node name="Body" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot"]
+layout_mode = 2
+size_flags_vertical = 3
+theme_override_constants/separation = 30
+
+[node name="Left" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 12
+
+[node name="ListHeader" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left"]
+layout_mode = 2
+mouse_filter = 2
+text = "曲目"
+
+[node name="TrackScroll" type="ScrollContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left"]
+layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="TrackList" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left/TrackScroll"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 8
+
+[node name="Right" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body"]
+custom_minimum_size = Vector2(520, 0)
+layout_mode = 2
+theme_override_constants/separation = 16
+
+[node name="VisualizerHost" type="Control" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 230)
+layout_mode = 2
+mouse_filter = 2
+
+[node name="NowPlaying" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+
+[node name="TrackArtist" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+
+[node name="Controls" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+layout_mode = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="MusicPrev" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "上一首"
+
+[node name="MusicPlay" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "播放"
+
+[node name="MusicNext" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "下一首"
+
+[node name="MusicTime" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+horizontal_alignment = 1
+text = "未在播放"
+
+[node name="CgViewer" type="Control" parent="UILayer"]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("11_cgviewer")
+
+[node name="Dim" type="ColorRect" parent="UILayer/CgViewer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(0.02, 0.018, 0.035, 0.97)
+
+[node name="Panel" type="PanelContainer" parent="UILayer/CgViewer"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+offset_left = 60.0
+offset_top = 50.0
+offset_right = -60.0
+offset_bottom = -50.0
+grow_horizontal = 2
+grow_vertical = 2
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/CgViewer/Panel"]
+layout_mode = 2
+theme_override_constants/separation = 18
+
+[node name="CgImage" type="TextureRect" parent="UILayer/CgViewer/Panel/VBox"]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_vertical = 3
+mouse_filter = 2
+expand_mode = 1
+stretch_mode = 5
+
+[node name="Footer" type="HBoxContainer" parent="UILayer/CgViewer/Panel/VBox"]
+layout_mode = 2
+theme_override_constants/separation = 18
+
+[node name="Info" type="VBoxContainer" parent="UILayer/CgViewer/Panel/VBox/Footer"]
+layout_mode = 2
+size_flags_horizontal = 3
+theme_override_constants/separation = 4
+
+[node name="CgViewerTitle" type="Label" parent="UILayer/CgViewer/Panel/VBox/Footer/Info"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+text = "CG"
+
+[node name="CgViewerHint" type="Label" parent="UILayer/CgViewer/Panel/VBox/Footer/Info"]
+unique_name_in_owner = true
+layout_mode = 2
+mouse_filter = 2
+text = ""
+
+[node name="CgReplay" type="Button" parent="UILayer/CgViewer/Panel/VBox/Footer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "重播剧情"
+
+[node name="CgViewerClose" type="Button" parent="UILayer/CgViewer/Panel/VBox/Footer"]
+unique_name_in_owner = true
+layout_mode = 2
+text = "关闭"
+
+[node name="MinigameLayer" type="CanvasLayer" parent="."]
+unique_name_in_owner = true
+layer = 20

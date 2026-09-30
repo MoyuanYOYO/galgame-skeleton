@@ -1,0 +1,36 @@
+{
+  "_comment": "音乐收藏品注册表。id 必须与 assets/audio/bgm/<id>.ogg 的文件名一致 —— 剧本里 bgm 指令播放该曲目时会自动解锁。",
+
+  "items": [
+    {
+      "id": "daily",
+      "title": "日常",
+      "artist": "Sound Team",
+      "hint": "序章 · 教室"
+    },
+    {
+      "id": "sunset",
+      "title": "黄昏",
+      "artist": "Sound Team",
+      "hint": "序章 · 天台"
+    },
+    {
+      "id": "theme",
+      "title": "主题曲",
+      "artist": "Sound Team",
+      "hint": "隐藏 · 尚未解锁"
+    },
+    {
+      "id": "tension",
+      "title": "紧张",
+      "artist": "Sound Team",
+      "hint": "隐藏 · 尚未解锁"
+    },
+    {
+      "id": "ending_theme",
+      "title": "终曲",
+      "artist": "Sound Team",
+      "hint": "隐藏 · 尚未解锁"
+    }
+  ]
+}

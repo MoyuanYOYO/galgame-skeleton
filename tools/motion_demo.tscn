@@ -1,0 +1,6 @@
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://tools/motion_demo.gd" id="1_motion"]
+
+[node name="MotionDemo" type="Node"]
+script = ExtResource("1_motion")

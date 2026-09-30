@@ -1,0 +1,22 @@
+{
+  "_comment": "章节表。给「章节选择」用：每章声明从哪个剧本文件的哪个标签开始。unlock_flag 为空表示一开始就能选；否则要等该 flag 被置位（通常由上一章末尾的 flag 指令设置）。",
+
+  "chapters": [
+    {
+      "id": "prologue",
+      "title": "序章 · 新学期",
+      "subtitle": "四月，教室，一个不太熟的邻座",
+      "file": "res://data/scripts/prologue.gvs",
+      "label": "start",
+      "unlock_flag": ""
+    },
+    {
+      "id": "chapter1",
+      "title": "第一章 · 春日的答案",
+      "subtitle": "天台上的那句话，说出口了吗",
+      "file": "res://data/scripts/chapter1.gvs",
+      "label": "chapter1_start",
+      "unlock_flag": "__chapter1_unlocked"
+    }
+  ]
+}
