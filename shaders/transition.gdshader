@@ -46,5 +46,10 @@ void fragment() {
 		mask = 1.0 - smoothstep(radius - softness, radius + softness, dist);
 	}
 
+	// 只输出「贴图 + 遮罩」，**不要**再乘进来的 COLOR。
+	// 节点 modulate（转场后普通淡入淡出走的 modulate.a）由引擎在 fragment
+	// 之后叠加；这里乘一遍等于叠加两次，实测会把正在转场的那一层压暗约 35%
+	// —— 表现为「转场时新画面的透明/半透部分发暗发红，转场一结束就恢复」
+	// （结束后材质留在 _bg_b 上、真正显示的 _bg_a 没有材质，所以又正常了）。
 	COLOR = vec4(tex.rgb, tex.a * mask);
 }

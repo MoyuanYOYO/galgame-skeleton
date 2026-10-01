@@ -115,6 +115,23 @@ bg classroom type=fade fade=0.5
 # 有语音素材时把上面这行打开：播完之后点说话人名字牌可以重播。
 # 语音文件放 assets/audio/voice/<id>.ogg，和音效用同一套命名规则。
 
+# --------------------------------------- 动态立绘 / 过场视频（演示，需素材）
+# 动态立绘不需要指令：把 assets/sprites/alice/blink/ 建成帧序列目录
+# （00.png / 01.png …，可选 anim.json 配 fps），show alice expr=blink 就会动。
+# 下面这几行是控制播放用的，等真有那个目录时再打开：
+#   anim alice speed=0.5        # 慢放
+#   anim alice pause=true       # 定格
+#   anim alice once             # 只播一遍
+#   anim alice frame=3          # 跳到第 3 帧
+#   anim alice                  # 恢复常速循环
+#
+# 过场视频同样需要素材（assets/video/<id>.ogv，Godot 只认 Ogg Theora）：
+#   video op                                  # 全屏，不阻塞
+#   video op wait=true                        # 播完再继续
+#   video op at=320,180 size=640,360          # 指定位置尺寸
+#   video op layer=ui                         # 压在 UI 之上
+#   hide_video fade=0.3
+
 # ------------------------------------------------------------ 选项分支
 choice
     "「游戏也是艺术。」" -> defend_games

@@ -93,6 +93,7 @@ func _ready() -> void:
 	_check_script_paths()
 	_check_shaders()
 	_check_architecture()
+	await _check_media()
 	await _check_scenes()
 
 	# 还原现场
@@ -221,6 +222,24 @@ func _check_ui_theme() -> void:
 	_ok(probe.custom_minimum_size == Vector2(340.0, 68.0),
 		"apply_button 按预设设了 custom_minimum_size")
 	_ok(probe.get_theme_font_size("font_size") == 26, "apply_button 按预设设了字号")
+
+	# --- 开关（CheckButton）的文字颜色 ---
+	# Godot 默认主题里 font_pressed_color / font_hover_pressed_color 是**白色**，
+	# 而本项目的面板是浅色纸面 —— 只覆盖 font_color 的话，「开关一打开文字就变白、
+	# 看不见」。所以必须逐个状态确认都被显式覆盖成了传入的颜色。
+	var check := CheckButton.new()
+	UiTheme.apply_check_button(check, UiTheme.TEXT, 20)
+	var not_overridden: Array = []
+	for state in ["font_color", "font_hover_color", "font_pressed_color",
+			"font_hover_pressed_color", "font_focus_color"]:
+		if check.get_theme_color(state) != UiTheme.TEXT:
+			not_overridden.append(state)
+	_ok(not_overridden.is_empty(),
+		"开关的五个文字状态色都被覆盖（否则打开/悬停会变白看不见）：%s"
+		% str(not_overridden))
+	_ok(check.get_theme_font_size("font_size") == 20, "开关字号跟随传入值")
+	_ok(check.get_theme_color("font_disabled_color") == UiTheme.TEXT_DIM,
+		"开关禁用态用次级色，不会白得看不见")
 
 	# --- 未定义预设要回退而不是崩 ---
 	var fallback := Button.new()
@@ -1446,6 +1465,7 @@ func _check_scenes() -> void:
 	_check_marker_stripping(main_node)
 	_check_i18n(main_node)
 	# 放最后：它会动到 runner（回滚快照还原）并把舞台 clear 掉
+	_check_settings_ui(main_node)
 	await _check_screen_fx(main_node)
 
 	main_node.queue_free()
@@ -1636,6 +1656,19 @@ func _check_gallery(main_node: Node, runner: ScriptRunner) -> void:
 	_ok(cg_viewer.has_replay(), "cg_classroom 配置了可重播片段")
 	main_node.call("_on_cg_activated", "cg_secret_01")
 	_ok(not cg_viewer.has_replay(), "未配置 replay 的 CG 会置灰重播按钮")
+
+	# --- 详情页的留白 ---
+	# 这个面板的 stylebox 是自己拼的（没走 apply_panel 预设），内边距曾经传 0 ——
+	# CG 图、标题文字和按钮会全部顶到边框上。
+	var viewer_panel := cg_viewer.get_node("Panel") as PanelContainer
+	var viewer_sb := viewer_panel.get_theme_stylebox("panel")
+	_ok(viewer_sb.content_margin_left > 0.0 and viewer_sb.content_margin_right > 0.0
+		and viewer_sb.content_margin_top > 0.0 and viewer_sb.content_margin_bottom > 0.0,
+		"CG 详情页面板有内边距（左 %.0f / 上 %.0f），内容不顶边框"
+		% [viewer_sb.content_margin_left, viewer_sb.content_margin_top])
+	_ok(GalleryTheme.count("viewer_pad_h", 0) > 0
+		and GalleryTheme.count("viewer_pad_v", 0) > 0,
+		"详情页的内边距在主题配置里（可调，不用改代码）")
 
 	# --- 音乐面板 ---
 	gallery.show_tab(GalleryPanel.TAB_MUSIC)
@@ -1993,6 +2026,9 @@ const OP_SAMPLES: Dictionary = {
 	"weather": {"line": "weather rain", "expect": "stage"},
 	"cg": {"line": "cg cg_classroom", "expect": "stage"},
 	"hide_cg": {"line": "hide_cg", "expect": "stage"},
+	"anim": {"line": "anim alice speed=0.5", "expect": "stage"},
+	"video": {"line": "video op_demo layer=ui", "expect": "stage"},
+	"hide_video": {"line": "hide_video fade=0.2", "expect": "stage"},
 	"unlock": {"line": "unlock cg cg_classroom", "expect": ""},
 	"bgm": {"line": "bgm daily", "expect": "audio"},
 	"se": {"line": "se bell", "expect": "audio"},
@@ -2084,6 +2120,8 @@ func _drive_to_end(runner: ScriptRunner, max_steps: int = 400) -> void:
 				runner.submit_choice(0)
 			"waiting_minigame":
 				runner.submit_minigame({"success": true, "score": 1, "max": 1})
+			"waiting_video":
+				runner.submit_video_finished()
 			"waiting_timer":
 				await _wait(0.06)
 			"ended", "idle":
@@ -2423,6 +2461,33 @@ func _check_shaders() -> void:
 			_ok(false, "%s 在 %s 里用了 return（Godot 着色语言不允许，会编译失败）"
 				% [file_name, ", ".join(offenders)])
 
+	# --- modulate 守卫：给 COLOR 赋值时**不要**乘进来的 COLOR。
+	#     节点 modulate（focus_speaker 改的 modulate.rgb、淡入淡出改的
+	#     modulate.a）由引擎在 fragment 之后叠加；在 shader 里再乘一遍等于
+	#     叠加两次 —— char_expr 会整张立绘暗掉约 40%（一挂材质就永久变暗），
+	#     transition 会把转场中的那一层压暗约 35%（转场时发暗发红，结束才恢复）。
+	#     这两个都是像素级才能发现的坑，逻辑测试只会全绿。
+	#     实测依据见 tools/char_shader_probe.gd 与 tools/mask_fidelity_probe.gd。
+	var modulated_shaders := {
+		"char_expr.gdshader": "表情材质一挂上就整张立绘变暗",
+		"transition.gdshader": "转场中的新画面发暗发红",
+	}
+	for file_name in modulated_shaders:
+		var src2 := FileAccess.get_file_as_string("res://shaders/%s" % file_name)
+		if src2.is_empty():
+			_ok(false, "%s 可读取" % file_name)
+			continue
+		var bad2 := _color_assigns_reapplying_modulate(src2)
+		_ok(bad2 == 0, "%s 的 COLOR 赋值没有重复叠加 modulate（否则%s）"
+			% [file_name, modulated_shaders[file_name]])
+
+	# 守卫自检：一个从不失败的守卫等于没有守卫。
+	var bad_src := "void fragment() {\n\tCOLOR = base * COLOR;\n}"
+	var good_src := "void fragment() {\n\tCOLOR = base;\n}"
+	_ok(_color_assigns_reapplying_modulate(bad_src) == 1
+		and _color_assigns_reapplying_modulate(good_src) == 0,
+		"modulate 守卫自检：抓得出重复叠加的写法、放行得了正确写法")
+
 
 ## 返回「在函数体里出现 return」的入口函数名列表。
 func _shader_entry_returns(src: String) -> Array:
@@ -2473,6 +2538,22 @@ func _has_return_statement(body: String) -> bool:
 	if re.compile("(^|[^A-Za-z0-9_])return([^A-Za-z0-9_]|$)") != OK:
 		return body.contains("return")
 	return re.search(body) != null
+
+
+## 数 fragment() 里「给 COLOR 赋值时又把进来的 COLOR 乘了一遍」的行数。
+## 节点 modulate 由引擎在 fragment 之后叠加（实测：modulate=0.55 时渲染结果
+## 正好是 shader 输出的 0.55 倍），shader 里再乘一次 = 叠加两次，
+## 表现为整层被压暗（char_expr 约 -40%、transition 约 -35%）。
+func _color_assigns_reapplying_modulate(src: String) -> int:
+	var body := _strip_line_comments(_extract_function_body(src, "fragment"))
+	var bad := 0
+	for line in body.split("\n"):
+		var l := String(line).strip_edges()
+		if not l.begins_with("COLOR") or not l.contains("=") or l.contains("=="):
+			continue
+		if l.contains("* COLOR") or l.contains("COLOR *"):
+			bad += 1
+	return bad
 
 
 # ---------------------------------------------------------------------------
@@ -2957,6 +3038,48 @@ func _check_script_paths() -> void:
 # 所以这里断言的是逻辑上观察得到的那部分，画面由 tools/capture.tscn 截图确认。
 # ---------------------------------------------------------------------------
 
+## 设置面板的开关：**扫真实面板**里的每一个 CheckButton。
+##
+## 只测 UiTheme.apply_check_button 是不够的 —— 有人绕过 helper、自己写
+## add_theme_color_override("font_color", ...) 的话守卫就漏了（这正是当初的写法：
+## 只覆盖 font_color，还把 hover 显式设成白色，于是开关一打开文字变白看不见）。
+func _check_settings_ui(main_node: Node) -> void:
+	print("[smoke] 设置面板：开关文字颜色")
+	main_node.call("_open_settings")
+	var rows := main_node.get_node("%SettingsRows") as VBoxContainer
+	var checks := _collect_check_buttons(rows)
+	_ok(checks.size() >= 3, "设置面板里有 %d 个开关" % checks.size())
+
+	var white_states: Array = []
+	for node in checks:
+		var check := node as CheckButton
+		for state in ["font_color", "font_hover_color", "font_pressed_color",
+				"font_hover_pressed_color", "font_focus_color"]:
+			var c := check.get_theme_color(state)
+			if c.r > 0.9 and c.g > 0.9 and c.b > 0.9:
+				white_states.append("%s.%s" % [check.text, state])
+	_ok(white_states.is_empty(),
+		"没有开关的文字颜色是白的（打开/悬停时也得看得见）：%s" % str(white_states))
+
+	# 字号要和其他功能窗口的正文一个尺度（原来是 22，比别处大一号）
+	var sizes: Array = []
+	for node in checks:
+		sizes.append((node as CheckButton).get_theme_font_size("font_size"))
+	_ok(sizes.size() > 0 and sizes.max() <= 20,
+		"开关字号 ≤20，与其它面板正文同尺度：%s" % str(sizes))
+	main_node.call("_close_modals")
+
+
+## 递归收集 CheckButton
+static func _collect_check_buttons(root: Node) -> Array:
+	var out: Array = []
+	for child in root.get_children():
+		if child is CheckButton:
+			out.append(child)
+		out.append_array(_collect_check_buttons(child))
+	return out
+
+
 func _check_screen_fx(main_node: Node) -> void:
 	print("[smoke] 29. 全屏特效")
 
@@ -3063,3 +3186,168 @@ func _check_screen_fx(main_node: Node) -> void:
 	fx.play("swirl", 1.0, 0.0)
 	main_node.call("_back_to_title")
 	_ok(not fx.is_active(), "回标题会关掉特效（否则标题界面一直糊着）")
+
+
+# ---------------------------------------------------------------------------
+# 30. 视频与帧序列动画
+# ---------------------------------------------------------------------------
+
+## 帧序列素材放在 tools/fixtures/sprites/ 下，测试时把立绘根目录临时指过去 ——
+## 这样不必往 assets/ 里塞一套演示帧序列，就能验证「目录 → 动画」这条约定。
+const MEDIA_FIXTURE_ROOT := "res://tools/fixtures/sprites/"
+const MEDIA_SCRIPT_PATH := "user://__smoke_media.gvs"
+
+
+func _check_media() -> void:
+	print("[smoke] 30. 视频与帧序列动画")
+
+	# --- 视频：素材解析 ---
+	_ok(VideoScreen.resolve("").is_empty(), "空 id 解析不出视频")
+	_ok(not VideoScreen.has_video("不存在的过场"), "不存在的视频判定为缺失")
+	_ok(VideoScreen.known_extensions() == PackedStringArray(["ogv"]),
+		"只认 Ogg Theora（Godot 内置没有别的视频解码器）")
+
+	# --- 视频：图层 ---
+	_ok(VideoScreen.LAYERS.size() == 3, "视频支持三个图层")
+	var w := int(VideoScreen.LAYER_VALUES["world"])
+	var u := int(VideoScreen.LAYER_VALUES["ui"])
+	var t := int(VideoScreen.LAYER_VALUES["top"])
+	_ok(w < 10 and u > 10 and t > u,
+		"图层顺序：world(%d) 在 UI 之下、ui(%d) 盖住 UI、top(%d) 在最上" % [w, u, t])
+
+	# --- 视频：位置与尺寸 ---
+	_ok(VideoScreen.resolve_rect({}) == Rect2(Vector2.ZERO, Vector2(1920, 1080)),
+		"默认铺满整屏")
+	var placed := VideoScreen.resolve_rect({"at": "320,180", "size": "640,360"})
+	_ok(placed.position == Vector2(320, 180) and placed.size == Vector2(640, 360),
+		"at=x,y + size=w,h 精确定位")
+	_ok(VideoScreen.resolve_rect({"at": "center", "size": "640,360"}).position
+		== Vector2(640, 360), "at=center 按尺寸居中")
+
+	# --- 视频：音量换算 ---
+	_ok(is_equal_approx(VideoScreen._volume_to_db(1.0), 0.0), "音量 1.0 = 0dB")
+	_ok(VideoScreen._volume_to_db(0.0) <= -80.0, "音量 0 视作静音")
+	_ok(VideoScreen._volume_to_db(0.5) < 0.0, "音量 0.5 是负 dB")
+
+	# --- 帧序列：自然排序 ---
+	var dir := MEDIA_FIXTURE_ROOT + "alice/breathe"
+	var frames := PlaceholderAssets.list_anim_frames(dir)
+	_ok(frames.size() == 3, "帧序列目录里读到 3 帧")
+	if frames.size() == 3:
+		_ok(frames[0].get_file() == "frame1.png" and frames[1].get_file() == "frame2.png"
+			and frames[2].get_file() == "frame10.png",
+			"按数字自然排序（frame10 在 frame2 之后，不是字典序）")
+
+	# --- 帧序列：构建 AnimatedTexture ---
+	var anim := PlaceholderAssets.load_anim_dir(dir) as AnimatedTexture
+	_ok(anim != null, "帧序列目录构建出 AnimatedTexture")
+	if anim != null:
+		_ok(anim.frames == 3, "帧数 = 3")
+		_ok(is_equal_approx(anim.get_frame_duration(0), 1.0 / 8.0),
+			"帧时长取自 anim.json 的 fps=8")
+		_ok(not anim.one_shot, "anim.json 里 loop=true → 不是一次性播放")
+	_ok(PlaceholderAssets.load_anim_dir("res://tools/fixtures/anim/nope") == null,
+		"目录不存在时返回 null（调用方好继续走静态图回退）")
+	_ok(PlaceholderAssets.load_anim_dir("res://tools/fixtures") == null,
+		"目录里没有图片时也返回 null")
+
+	# --- 立绘走「帧序列目录」约定 ---
+	PlaceholderAssets.sprite_root_override = MEDIA_FIXTURE_ROOT
+	_ok(PlaceholderAssets.get_char("alice", "breathe") is AnimatedTexture,
+		"立绘命中帧序列目录 → 拿到动画贴图")
+	_ok(not (PlaceholderAssets.get_char("alice", "nope") is AnimatedTexture),
+		"没有帧序列的表情仍走静态回退，不会被误判成动画")
+
+	# --- Stage：anim 指令 ---
+	var stage := Stage.new()
+	get_tree().root.add_child(stage)
+	await get_tree().process_frame
+
+	stage.show_char("alice", "breathe", "center", "none", 0.0)
+	var char_anim := stage.get_char_anim("alice")
+	_ok(char_anim != null, "帧序列立绘在 Stage 里就是动画对象")
+	_ok(stage.set_char_anim("alice", 2.0, true, false, 1),
+		"anim 能改速度 / 暂停 / 帧号")
+	if char_anim != null:
+		_ok(is_equal_approx(char_anim.speed_scale, 2.0) and char_anim.pause
+			and char_anim.current_frame == 1, "anim 参数逐项生效")
+
+	PlaceholderAssets.sprite_root_override = ""
+	stage.show_char("alice", "normal", "center", "none", 0.0)
+	_ok(stage.get_char_anim("alice") == null, "静态立绘没有动画对象")
+	_ok(not stage.set_char_anim("alice", 0.5),
+		"静态立绘上 anim 返回 false（不报错、不影响画面）")
+	_ok(not stage.set_char_anim("不存在的人"), "对不存在的角色调用 anim 也安全")
+	_ok(PlaceholderAssets.sprite_root() == "res://assets/sprites/",
+		"清掉测试注入后回到真实素材根目录")
+	stage.queue_free()
+
+	# --- 调度器：video 的阻塞与不阻塞 ---
+	await _check_video_flow()
+
+	# --- 视频：起播缓冲 ---
+	# Godot 默认 buffering_msec=500，实测那 0.5 秒里画面是空的（过场开头先黑一下）。
+	_ok(VideoScreen.DEFAULT_BUFFER_MS <= 200,
+		"默认起播缓冲 ≤200ms（Godot 默认 500ms 会让过场开头黑一下）")
+	var vparse := GvsParser.parse("label start\nvideo op buffer=300\n", "<t>")
+	var vcmd: Dictionary = {}
+	for c in vparse.get("commands", []):
+		if String((c as Dictionary).get("op", "")) == "video":
+			vcmd = c
+	_ok(int(vcmd.get("buffer", -1)) == 300, "video 的 buffer= 能解析出来")
+	var vdefault := GvsParser.parse("label start\nvideo op\n", "<t>")
+	var vcmd2: Dictionary = {}
+	for c in vdefault.get("commands", []):
+		if String((c as Dictionary).get("op", "")) == "video":
+			vcmd2 = c
+	_ok(int(vcmd2.get("buffer", -1)) == VideoScreen.DEFAULT_BUFFER_MS,
+		"不写 buffer= 时用默认值")
+
+	# --- 视频：素材解析（用测试注入的根目录）---
+	VideoScreen.video_root_override = "res://tools/fixtures/video/"
+	_ok(VideoScreen.has_video("pattern"), "注入视频根目录后能解析到测试视频")
+	_ok(not VideoScreen.has_video("根本没有这段视频"), "不存在的 id 仍判定为缺失")
+	VideoScreen.video_root_override = ""
+	_ok(VideoScreen.video_root() == "res://assets/video/",
+		"清掉测试注入后回到真实视频根目录")
+
+	# --- 剧本审计认得出视频素材 ---
+	_ok(ScriptAudit.ASSET_DIRS.has("video"), "审计的素材表里有 video 目录")
+	var used := {}
+	ScriptAudit._collect_assets({"op": "video", "id": "op_demo"}, used)
+	_ok((used.get("video", {}) as Dictionary).has("op_demo"), "审计收集到 video 素材 id")
+	_ok(not ScriptAudit.has_real_asset("video", "op_demo"),
+		"没有真实 .ogv 时判定为缺失（会出现在缺素材清单里）")
+
+
+func _check_video_flow() -> void:
+	# wait=true：调度器必须停在等待态，等外部放行
+	await _run_media_script("video op_demo wait=true\nnarr 视频之后\n", func(runner: ScriptRunner) -> void:
+		_ok(runner.is_waiting_video(), "video wait=true 让调度器进入等待态")
+		runner.submit_video_finished()
+		_ok(not runner.is_waiting_video(), "放行后离开等待态")
+		_ok(runner.is_waiting_say(), "放行后停在下一条对白"))
+
+	# 不带 wait：不阻塞，直接走到下一句
+	await _run_media_script("video op_demo\nnarr 直接过\n", func(runner: ScriptRunner) -> void:
+		_ok(runner.is_waiting_say(), "video 不带 wait 时不阻塞，直接走到下一句"))
+
+
+func _run_media_script(body: String, check: Callable) -> void:
+	var writer := FileAccess.open(MEDIA_SCRIPT_PATH, FileAccess.WRITE)
+	if writer == null:
+		_ok(false, "无法写入视频测试剧本")
+		return
+	writer.store_string("label start\n" + body + "ending smoke_media \"视频\"\n")
+	writer.close()
+
+	var runner := ScriptRunner.new()
+	get_tree().root.add_child(runner)
+	if not runner.load_script(MEDIA_SCRIPT_PATH):
+		_ok(false, "视频测试剧本可加载")
+		runner.queue_free()
+		return
+	runner.start()
+	check.call(runner)
+	runner.queue_free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(MEDIA_SCRIPT_PATH))

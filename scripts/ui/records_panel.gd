@@ -37,9 +37,11 @@ func _ready() -> void:
 	mouse_filter = Control.MOUSE_FILTER_STOP
 
 	_dim = ColorRect.new()
-	# 和鉴赏面板用同一个遮罩色。面板满屏之后遮罩只露一圈边，
-	# 但那一圈的颜色不一致会一眼看出来。
-	_dim.color = Color(0.031, 0.027, 0.055, 0.94)
+	# 名字固定成 "Dim"：main.gd 的 _apply_scrims() 按这个名字统一接管
+	# 各个面板的遮罩色（见 ui_theme.json 的 scrim 段）。
+	_dim.name = "Dim"
+	# 这里的颜色只是兜底值，运行时会被 UiTheme.scrim_color(true) 覆盖。
+	_dim.color = Color(0.031, 0.027, 0.055, 0.72)
 	_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_dim.mouse_filter = Control.MOUSE_FILTER_STOP
 	add_child(_dim)

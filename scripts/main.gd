@@ -28,6 +28,10 @@ const ROLLBACK_CAPACITY := 100
 ## 全屏特效层。在 UILayer 之上（见 main.tscn 的 FxLayer），
 ## 所以它连对话框一起变形 —— 这是刻意的。
 @onready var screen_fx: ScreenFx = %ScreenFx
+## 视频层。它是个 CanvasLayer，`layer` 由 video 指令的 layer= 决定 ——
+## 所以同一段视频既能压在对话框之下（world），也能盖住整个 UI（ui/top）。
+@onready var video_layer: CanvasLayer = $VideoLayer
+@onready var video: VideoScreen = %VideoScreen
 @onready var dialogue: DialogueBox = %DialogueBox
 @onready var choices: ChoicePanel = %ChoicePanel
 @onready var backlog: BacklogPanel = %BacklogPanel
@@ -112,6 +116,7 @@ func _ready() -> void:
 	gallery.music_track_selected.connect(_on_music_track_selected)
 	gallery.closed.connect(_on_gallery_closed)
 	cg_viewer.replay_requested.connect(_on_cg_replay_requested)
+	video.finished.connect(_on_video_finished)
 	title.start_requested.connect(_on_start_requested)
 	title.continue_requested.connect(_on_continue_requested)
 	title.load_requested.connect(_on_load_requested)
@@ -148,6 +153,7 @@ func _ready() -> void:
 		ui_layer.add_child(debug_console)
 
 	_style_hud()
+	_apply_scrims()
 	# 界面文案翻译要在所有界面都建好之后、显示之前做一遍。
 	# 静态文案（写在 main.tscn 里的按钮 / 标签）由它统一替换，
 	# 代码里拼出来的那部分在各自的生成处显式调了 I18n.t()。
@@ -339,9 +345,53 @@ func _on_stage_command(cmd: Dictionary) -> void:
 			screen_fx.play(String(cmd.get("kind", ScreenFxSpec.OFF)),
 				float(cmd.get("strength", 1.0)),
 				float(cmd.get("duration", ScreenFxSpec.DEFAULT_DURATION)))
+		"anim":
+			stage.set_char_anim(String(cmd.get("char", "")),
+				float(cmd.get("speed", 1.0)),
+				bool(cmd.get("pause", false)),
+				bool(cmd.get("once", false)),
+				int(cmd.get("frame", -1)))
+		"video":
+			_play_video(cmd)
+		"hide_video":
+			video.stop(float(cmd.get("fade", 0.3)))
 		"clear":
 			stage.clear()
 			screen_fx.clear()
+			video.clear()
+
+
+## 播放视频。图层 / 位置 / 尺寸都由指令参数决定。
+##
+## 素材缺失时**不能静默失败**：剧本写了 `video xxx wait=true`，如果播不出来
+## 又没人放行，调度器会永远卡在等待态（玩家看到的是一句话都不出的黑屏）。
+## 所以这里失败就立刻用 call_deferred 放行 —— 延后一帧是因为此刻调度器
+## 还在 _execute 里、等待态刚置上，直接回调会重入 _step()。
+func _play_video(cmd: Dictionary) -> void:
+	var layer_name := String(cmd.get("layer", "world"))
+	video_layer.layer = int(VideoScreen.LAYER_VALUES.get(layer_name, 0))
+	var opts := {
+		"at": String(cmd.get("at", "full")),
+		"fade": float(cmd.get("fade", 0.0)),
+		"volume": float(cmd.get("volume", 1.0)),
+		"speed": float(cmd.get("speed", 1.0)),
+		"buffer": int(cmd.get("buffer", VideoScreen.DEFAULT_BUFFER_MS)),
+		"loop": bool(cmd.get("loop", false)),
+		"hide": bool(cmd.get("hide", true)),
+	}
+	var size := String(cmd.get("size", "")).strip_edges()
+	if not size.is_empty():
+		opts["size"] = size
+	if video.play(String(cmd.get("id", "")), opts):
+		return
+	if bool(cmd.get("wait", false)):
+		runner.call_deferred("submit_video_finished")
+
+
+func _on_video_finished(_id: String) -> void:
+	# 只有剧本写了 wait=true 时调度器才在等；没写的话这个调用是空操作。
+	if runner != null:
+		runner.submit_video_finished()
 
 
 ## 全屏特效是否该被模态面板压住。
@@ -366,6 +416,7 @@ func _shake_ui(strength: float, times: int, duration: float) -> void:
 	if _ui_shake_tween != null and _ui_shake_tween.is_valid():
 		_ui_shake_tween.kill()
 	ui_layer.offset = Vector2.ZERO
+	video_layer.offset = Vector2.ZERO
 	if duration <= 0.0 or times <= 0:
 		return
 
@@ -373,10 +424,17 @@ func _shake_ui(strength: float, times: int, duration: float) -> void:
 	var tw := create_tween()
 	for i in times:
 		var decay := 1.0 - float(i) / float(times)
-		tw.tween_property(ui_layer, "offset", Vector2(
+		var off := Vector2(
 			randf_range(-strength, strength),
-			randf_range(-strength, strength)) * decay, step).set_trans(Tween.TRANS_SINE)
+			randf_range(-strength, strength)) * decay
+		tw.tween_property(ui_layer, "offset", off, step).set_trans(Tween.TRANS_SINE)
+		# parallel()：视频层跟着同一拍抖，而不是排在 UI 之后（否则整个震动
+		# 时长会翻倍，节奏也不对）。
+		tw.parallel().tween_property(video_layer, "offset", off, step) \
+			.set_trans(Tween.TRANS_SINE)
 	tw.tween_property(ui_layer, "offset", Vector2.ZERO, step).set_trans(Tween.TRANS_SINE)
+	tw.parallel().tween_property(video_layer, "offset", Vector2.ZERO, step) \
+		.set_trans(Tween.TRANS_SINE)
 	_ui_shake_tween = tw
 
 
@@ -516,6 +574,12 @@ func _on_script_ended(ending_id: String, ending_title: String) -> void:
 func _on_advance_requested() -> void:
 	if runner == null or runner.is_waiting_minigame() or choices.visible:
 		return
+	# 视频阻塞中：点一下等于「跳过这段演出」。这既是 galgame 的惯例，
+	# 也是兜底 —— 万一 finished 因为解码异常没发出来，玩家还能自己走出去。
+	if runner.is_waiting_video():
+		video.stop(0.2)
+		runner.submit_video_finished()
+		return
 	if runner.is_ended():
 		_back_to_title()
 		return
@@ -594,6 +658,9 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
 	# 特效直接落到快照那一刻的状态，不做淡入 —— 回滚是「回到那一刻」，
 	# 那一刻它本来就是完全体，再播一遍过渡反而是错的。
 	var fx: Dictionary = snapshot.get("fx", {})
+	# 视频不在快照里（和特效一样属于瞬时状态），回滚时直接收掉 ——
+	# 否则会有一段上一句的视频压着已经回退过的画面继续播。
+	video.clear()
 	screen_fx.restore_fx(String(fx.get("kind", ScreenFxSpec.OFF)),
 		float(fx.get("strength", 0.0)))
 
@@ -778,6 +845,7 @@ func _show_title() -> void:
 		_ui_shake_tween.kill()
 	_ui_shake_tween = null
 	ui_layer.offset = Vector2.ZERO
+	video_layer.offset = Vector2.ZERO
 
 	title.set_save_available(SaveManager.newest_slot() >= 0)
 	title.visible = true
@@ -788,6 +856,7 @@ func _show_title() -> void:
 	# 回到标题也是一次「跳到别处」。不清的话，一个 duration<=0 的持续特效
 	# 会一直糊在标题界面上，看起来像游戏坏了。
 	screen_fx.clear()
+	video.clear()
 
 
 func _back_to_title() -> void:
@@ -808,6 +877,7 @@ func _on_start_requested(file: String = "", label: String = "") -> void:
 	GameManager.reset_run()
 	stage.clear()
 	screen_fx.clear()
+	video.clear()
 	_backlog_entries.clear()
 	_rollback.clear()
 	_last_speaker = ""
@@ -925,6 +995,9 @@ func _restore_session(game: Dictionary, stage_state: Dictionary, backlog: Array,
 	# 全屏特效是瞬时状态，不跟着存档走 —— 读档进来时屏幕上不该还糊着
 	# 存档那一刻的错乱。重播结束同理：插叙放完回正片，别把特效留在屏幕上。
 	screen_fx.clear()
+	# 视频也是瞬时状态，不跟着存档走 —— 读档 / 重播结束时屏幕上不该还压着
+	# 存档那一刻的过场动画。
+	video.clear()
 	_backlog_entries = _sanitize_backlog(backlog)
 	_last_speaker = speaker
 	_last_text = text
@@ -1121,3 +1194,24 @@ func _style_hud() -> void:
 			continue
 		btn.focus_mode = Control.FOCUS_NONE
 		UiTheme.apply_button(btn, "hud")
+
+
+## 统一刷各个模态面板背后的压暗遮罩。
+##
+## 以前这些颜色是写死在 main.tscn 的 Dim 节点上的（0.88 ~ 0.97），
+## 设置面板一开、面板外的画面几乎全黑 —— 太闷。现在颜色与透明度统一走
+## ui_theme.json 的 scrim 段，想调「压多暗」改配置就行，不用动场景文件。
+##
+## 放在 main.gd 而不是各面板自己 _ready 里：面板有七个，散着写就会
+## 出现「某一块忘了改、颜色对不上」；这里一处扫完，新加面板只要挂一个
+## 名叫 Dim 的 ColorRect 就会自动被接管。
+func _apply_scrims() -> void:
+	for panel in [backlog, settings, save_load, gallery, cg_viewer, records]:
+		if panel == null:
+			continue
+		var dim := (panel as Node).get_node_or_null("Dim") as ColorRect
+		if dim == null:
+			continue
+		# 鉴赏 / CG 详情 / 记录是近满屏面板，遮罩只露一圈边，走深一档
+		dim.color = UiTheme.scrim_color(panel == gallery or panel == cg_viewer
+			or panel == records)

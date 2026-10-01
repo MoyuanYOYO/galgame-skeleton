@@ -16,9 +16,13 @@ const ASSET_DIRS := {
 	"se": "res://assets/audio/se/",
 	"bgm": "res://assets/audio/bgm/",
 	"voice": "res://assets/audio/voice/",
+	"video": "res://assets/video/",
 }
 const AUDIO_EXT: PackedStringArray = ["ogg", "mp3", "wav"]
 const IMAGE_EXT: PackedStringArray = ["png", "jpg", "jpeg", "webp"]
+## Godot 内置只认 Ogg Theora。这里刻意不引用 VideoScreen —— core 层不许
+## 碰表现层的类（架构守卫会拦），所以后缀表在两边各留一份。
+const VIDEO_EXT: PackedStringArray = ["ogv"]
 
 ## 这些标签是被跳转进来的入口，没人 jump 到它们也不算「未使用」
 const ENTRY_LABELS: PackedStringArray = ["start"]
@@ -194,6 +198,11 @@ static func has_real_asset(kind: String, id: String) -> bool:
 			return true
 		var sub := DirAccess.open(dir + id + "/")
 		return sub != null
+	if kind == "video":
+		for ext in VIDEO_EXT:
+			if ResourceLoader.exists("%s%s.%s" % [dir, id, ext]):
+				return true
+		return false
 	return _exists_any(dir + id)
 
 
@@ -217,6 +226,8 @@ static func _collect_assets(cmd: Dictionary, used: Dictionary) -> void:
 			_add(used, "bg", String(cmd.get("id", "")))
 		"cg":
 			_add(used, "cg", String(cmd.get("id", "")))
+		"video":
+			_add(used, "video", String(cmd.get("id", "")))
 		"show", "hide", "move", "expr", "hop", "zoom", "shake":
 			_add(used, "char", String(cmd.get("char", "")))
 		"se":

@@ -204,15 +204,42 @@ static func _make_gradient_bg(id: String) -> Texture2D:
 # 立绘
 # ---------------------------------------------------------------------------
 
+## 帧序列目录里的可选配置文件，用来覆盖帧率与是否循环：
+##   { "fps": 12, "loop": true }
+const ANIM_META := "anim.json"
+## 没配 anim.json 时的默认帧率。12fps 是「呼吸 / 眨眼」这类轻微循环的常用值。
+const ANIM_DEFAULT_FPS := 12.0
+
+## 供自动化测试注入的立绘根目录。留空 = SPRITE_DIR。
+##
+## 存在的意义：验证「帧序列目录 → 动画」这条约定，需要往 assets/sprites/ 下
+## 放一套演示帧序列；指向 tools/fixtures/sprites/ 就不必污染真实素材目录。
+static var sprite_root_override: String = ""
+
+static var _anim_cache: Dictionary = {}
+
+
+static func sprite_root() -> String:
+	return SPRITE_DIR if sprite_root_override.is_empty() else sprite_root_override
+
+
 static func get_char(char_id: String, expr: String) -> Texture2D:
 	if char_id.is_empty():
 		char_id = "unknown"
 	if expr.is_empty():
 		expr = "normal"
-	var real := _load_real(SPRITE_DIR, char_id)
+	var root := sprite_root()
+	var real := _load_real(root, char_id)
 	if real != null:
 		return real
-	var real_expr := _load_real(SPRITE_DIR + char_id + "/", expr)
+
+	# 帧序列目录优先于同名静态图：assets/sprites/alice/smile/ 存在时，
+	# 说明作者要的就是会动的那个表情。
+	var anim := load_anim_dir(root + char_id + "/" + expr)
+	if anim != null:
+		return anim
+
+	var real_expr := _load_real(root + char_id + "/", expr)
 	if real_expr != null:
 		return real_expr
 
@@ -221,7 +248,10 @@ static func get_char(char_id: String, expr: String) -> Texture2D:
 	# 没删干净蹦出来」。先回退到该角色的 normal 表情才是对的：
 	# 表情没跟上，至少人还是那个人。
 	if expr != "normal":
-		var fallback_expr := _load_real(SPRITE_DIR + char_id + "/", "normal")
+		var fallback_anim := load_anim_dir(root + char_id + "/normal")
+		if fallback_anim != null:
+			return fallback_anim
+		var fallback_expr := _load_real(root + char_id + "/", "normal")
 		if fallback_expr != null:
 			return fallback_expr
 
@@ -236,7 +266,109 @@ static func get_char(char_id: String, expr: String) -> Texture2D:
 
 
 static func has_real_char(char_id: String) -> bool:
-	return _load_real(SPRITE_DIR, char_id) != null
+	var root := sprite_root()
+	if _load_real(root, char_id) != null:
+		return true
+	return DirAccess.dir_exists_absolute(root + char_id)
+
+
+# ---------------------------------------------------------------------------
+# 帧序列动画
+# ---------------------------------------------------------------------------
+#
+# Godot 内置**没有**动图解码器：GIF 直接「No loader found」，APNG 只取第一帧，
+# 动画 WebP 连第一帧都解不出来（见 tools/anim_probe.gd 实测）。
+# 所以「动态图片 / 动态立绘」的唯一可靠路线是**帧序列**：
+# 把每一帧导出成 PNG/WebP，交给 AnimatedTexture 播。
+#
+# AnimatedTexture 本身就是 Texture2D，所以它能直接替换立绘节点的 texture ——
+# 压暗、位移、缩放、表情交叉混合那些逻辑一行都不用改。
+#
+# 目录约定（以立绘为例）：
+#   assets/sprites/alice/smile/00.png
+#   assets/sprites/alice/smile/01.png
+#   assets/sprites/alice/smile/anim.json   ← 可选
+# 目录存在就自动生效，剧本里不用写任何额外指令。
+
+## 一个帧序列目录 → AnimatedTexture。返回 null 表示「这不是帧序列」
+## （目录不存在 / 一帧都没有），调用方应当继续走静态图回退。
+static func load_anim_dir(dir: String) -> Texture2D:
+	if dir.is_empty() or not DirAccess.dir_exists_absolute(dir):
+		return null
+	if _anim_cache.has(dir):
+		return _anim_cache[dir] as Texture2D
+
+	var frames := list_anim_frames(dir)
+	if frames.is_empty():
+		return null
+
+	var meta := read_anim_meta(dir)
+	var fps := maxf(1.0, float(meta.get("fps", ANIM_DEFAULT_FPS)))
+	var count := frames.size()
+	if count > AnimatedTexture.MAX_FRAMES:
+		push_warning("[Anim] %s 有 %d 帧，超过 AnimatedTexture 上限 %d，只取前 %d 帧"
+			% [dir, count, AnimatedTexture.MAX_FRAMES, AnimatedTexture.MAX_FRAMES])
+		count = AnimatedTexture.MAX_FRAMES
+
+	var anim := AnimatedTexture.new()
+	anim.frames = count
+	anim.speed_scale = 1.0
+	anim.one_shot = not bool(meta.get("loop", true))
+	for i in count:
+		anim.set_frame_texture(i, load(frames[i]) as Texture2D)
+		anim.set_frame_duration(i, 1.0 / fps)
+	_anim_cache[dir] = anim
+	return anim
+
+
+## 目录里的帧文件列表，按名字里的数字自然排序（frame2 排在 frame10 前面）。
+static func list_anim_frames(dir: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	var d := DirAccess.open(dir)
+	if d == null:
+		return out
+	var names: Array = []
+	d.list_dir_begin()
+	var f := d.get_next()
+	while not f.is_empty():
+		if not d.current_is_dir() and f.get_extension().to_lower() in IMAGE_EXTENSIONS:
+			names.append(f)
+		f = d.get_next()
+	d.list_dir_end()
+	# PackedStringArray 没有 sort_custom，所以先收进普通 Array 再排
+	names.sort_custom(func(a: Variant, b: Variant) -> bool:
+		return _frame_sort_key(String(a)) < _frame_sort_key(String(b)))
+	for n in names:
+		out.append(dir.path_join(String(n)))
+	return out
+
+
+static func read_anim_meta(dir: String) -> Dictionary:
+	var path := dir.path_join(ANIM_META)
+	if not FileAccess.file_exists(path):
+		return {}
+	var parsed: Variant = JSON.parse_string(FileAccess.get_file_as_string(path))
+	return parsed if typeof(parsed) == TYPE_DICTIONARY else {}
+
+
+## 排序键：抽出文件名里**第一段数字**并补零到 9 位，再接原名。
+## 直接用字符串排序会把 frame10 排在 frame2 前面，这是帧序列最经典的坑。
+static func _frame_sort_key(name: String) -> String:
+	var start := -1
+	var stop := -1
+	for i in name.length():
+		var ch := name[i]
+		var is_digit := ch >= "0" and ch <= "9"
+		if is_digit and start < 0:
+			start = i
+		elif not is_digit and start >= 0:
+			stop = i
+			break
+	if start < 0:
+		return "999999999|" + name
+	if stop < 0:
+		stop = name.length()
+	return "%09d|%s" % [int(name.substr(start, stop - start)), name]
 
 
 static func _make_char_texture(char_id: String, expr: String) -> Texture2D:

@@ -45,6 +45,9 @@ static func _defaults() -> Dictionary:
 			"card_title_font_size": 20,
 			"track_font_size": 20,
 			"button_font_size": 22,
+			# CG 查看器面板的内边距。没这两个值的话面板内容会直接顶到边框上。
+			"viewer_pad_h": 30,
+			"viewer_pad_v": 26,
 		},
 		"text": {
 			"title": "鉴 赏",

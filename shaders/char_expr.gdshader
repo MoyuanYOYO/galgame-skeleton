@@ -20,8 +20,12 @@ void fragment() {
 	// （表现为表情过渡整段失效，而逻辑测试仍然全绿，很难发现）。
 	if (has_from) {
 		vec4 prev = texture(from_tex, UV);
-		COLOR = mix(prev, base, progress);
-	} else {
-		COLOR = base;
+		base = mix(prev, base, progress);
 	}
+	// 只输出「贴图本身的颜色」就够了，**不要**再乘进来的 COLOR。
+	// 节点 modulate（说话人压暗改的 modulate.rgb、淡入淡出改的 modulate.a）
+	// 由引擎在 fragment 之后叠加，这里乘一遍等于叠加两次：
+	// 实测整张立绘会暗掉约 40%，而且是「一挂上本材质就永久变暗」——
+	// 正是「女主前两句正常、之后变深色变不回来」那个 bug。
+	COLOR = base;
 }

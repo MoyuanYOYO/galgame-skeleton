@@ -12,6 +12,7 @@
 [ext_resource type="Script" uid="uid://bf07ljpi5nhmp" path="res://scripts/ui/music_panel.gd" id="10_music"]
 [ext_resource type="Script" uid="uid://ciptuwpx3lk3u" path="res://scripts/ui/cg_viewer.gd" id="11_cgviewer"]
 [ext_resource type="Script" uid="uid://utvwrvwhrog" path="res://scripts/stage/screen_fx.gd" id="12_screenfx"]
+[ext_resource type="Script" path="res://scripts/stage/video_screen.gd" id="13_videoscreen"]
 
 [node name="Main" type="Control" unique_id=1649682032]
 layout_mode = 3
@@ -299,7 +300,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.031, 0.027, 0.055, 0.88)
+color = Color(0.031, 0.027, 0.055, 0.55)
 
 [node name="Panel" type="PanelContainer" parent="UILayer/BacklogPanel" unique_id=6452485]
 layout_mode = 1
@@ -357,7 +358,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.031, 0.027, 0.055, 0.88)
+color = Color(0.031, 0.027, 0.055, 0.55)
 
 [node name="Panel" type="PanelContainer" parent="UILayer/SettingsPanel" unique_id=541355730]
 layout_mode = 1
@@ -418,7 +419,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.031, 0.027, 0.055, 0.88)
+color = Color(0.031, 0.027, 0.055, 0.55)
 
 [node name="Panel" type="PanelContainer" parent="UILayer/SaveLoadPanel" unique_id=1509695852]
 layout_mode = 1
@@ -476,7 +477,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.031, 0.027, 0.055, 0.94)
+color = Color(0.031, 0.027, 0.055, 0.72)
 
 [node name="Panel" type="PanelContainer" parent="UILayer/GalleryPanel" unique_id=1201876620]
 layout_mode = 1
@@ -636,7 +637,7 @@ anchor_bottom = 1.0
 grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
-color = Color(0.02, 0.018, 0.035, 0.97)
+color = Color(0.031, 0.027, 0.055, 0.72)
 
 [node name="Panel" type="PanelContainer" parent="UILayer/CgViewer" unique_id=673260729]
 layout_mode = 1
@@ -689,6 +690,20 @@ text = "重播剧情"
 unique_name_in_owner = true
 layout_mode = 2
 text = "关闭"
+
+[node name="VideoLayer" type="CanvasLayer" parent="." unique_id=1500298471]
+layer = 0
+
+[node name="VideoScreen" type="Control" parent="VideoLayer" unique_id=1738450026]
+unique_name_in_owner = true
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("13_videoscreen")
 
 [node name="MinigameLayer" type="CanvasLayer" parent="." unique_id=1240480768]
 unique_name_in_owner = true

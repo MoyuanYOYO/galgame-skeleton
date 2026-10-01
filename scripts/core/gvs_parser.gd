@@ -31,6 +31,8 @@ const KEYWORDS: PackedStringArray = [
 	"bg", "show", "hide", "move", "expr", "clear",
 	"hop", "zoom", "shake", "screen_shake", "screen_flash", "screen_fx",
 	"bg_motion", "weather",
+	"anim",
+	"video", "hide_video",
 	"cg", "hide_cg", "unlock",
 	"bgm", "se", "voice",
 	"wait", "wait_click", "pause",
@@ -250,6 +252,9 @@ class Builder extends RefCounted:
 			"screen_fx": _do_screen_fx(tokens)
 			"bg_motion": _do_bg_motion(tokens)
 			"weather": _do_weather(tokens)
+			"anim": _do_anim(tokens)
+			"video": _do_video(tokens)
+			"hide_video": _do_hide_video(tokens)
 			"expr": _do_expr(tokens)
 			"clear": commands.append({"op": "clear"})
 			"cg": _do_cg(tokens)
@@ -499,6 +504,67 @@ class Builder extends RefCounted:
 			"op": "weather",
 			"kind": tokens[1],
 			"intensity": float(kv.get("intensity", 1.0)),
+		})
+
+	## 控制某个立绘的帧序列动画（素材是「帧序列目录」时才有意义）
+	##
+	##   anim alice                    恢复常速循环播放
+	##   anim alice speed=0.5          慢放
+	##   anim alice pause=true         定格在当前帧
+	##   anim alice once               只播一遍，停在最后一帧
+	##   anim alice frame=3            跳到第 3 帧（0 基）
+	func _do_anim(tokens: PackedStringArray) -> void:
+		if tokens.size() < 2:
+			error("anim 缺少角色 id")
+			return
+		var kv := GvsParser.parse_kv(tokens, 2)
+		commands.append({
+			"op": "anim",
+			"char": tokens[1],
+			"speed": float(kv.get("speed", 1.0)),
+			"pause": bool(kv.get("pause", false)),
+			"once": bool(kv.get("once", false)),
+			"frame": int(kv.get("frame", -1)),
+		})
+
+	## 播放一段视频（Godot 只认 Ogg Theora .ogv，素材放 assets/video/<id>.ogv）
+	##
+	##   video op                      全屏播放，不阻塞，播完自动收起
+	##   video op wait=true            播完再继续剧情
+	##   video op at=320,180 size=640,360
+	##   video op layer=ui             压在 UI 之上（world / ui / top）
+	##   video op loop=true volume=0.5 fade=0.4 speed=1.5
+	func _do_video(tokens: PackedStringArray) -> void:
+		if tokens.size() < 2:
+			error("video 缺少 id")
+			return
+		var kv := GvsParser.parse_kv(tokens, 2)
+		var layer := String(kv.get("layer", "world")).strip_edges().to_lower()
+		if not VideoScreen.LAYERS.has(layer):
+			error("video 未知图层 %s（可用：%s）"
+				% [layer, ", ".join(VideoScreen.LAYERS)])
+			return
+		commands.append({
+			"op": "video",
+			"id": tokens[1],
+			"at": String(kv.get("at", "full")),
+			"size": String(kv.get("size", "")),
+			"layer": layer,
+			"fade": float(kv.get("fade", 0.0)),
+			"volume": float(kv.get("volume", 1.0)),
+			"speed": float(kv.get("speed", 1.0)),
+			"buffer": int(kv.get("buffer", VideoScreen.DEFAULT_BUFFER_MS)),
+			"loop": bool(kv.get("loop", false)),
+			"wait": bool(kv.get("wait", false)),
+			"hide": bool(kv.get("hide", true)),
+		})
+
+	## 收掉视频（淡出）
+	func _do_hide_video(tokens: PackedStringArray) -> void:
+		var kv := GvsParser.parse_kv(tokens, 1)
+		commands.append({
+			"op": "hide_video",
+			"fade": float(kv.get("fade", 0.3)),
 		})
 
 	## 展示一张全屏 CG，同时把它计入收藏

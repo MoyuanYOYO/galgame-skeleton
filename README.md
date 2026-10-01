@@ -141,10 +141,17 @@ assets/bg/<背景id>.png              1920×1080，如 classroom.png / rooftop.p
 assets/cg/<CG id>.png               1920×1080，CG 事件图
 assets/sprites/<角色>.png           立绘整图
 assets/sprites/<角色>/<表情>.png    立绘差分（优先级更高）
+assets/sprites/<角色>/<表情>/       立绘**帧序列目录**（优先级最高，会动）
 assets/audio/bgm/<id>.ogg           BGM（也支持 mp3 / wav）
 assets/audio/se/<id>.ogg            音效
 assets/audio/voice/<id>.ogg         语音
+assets/video/<id>.ogv               过场视频（Godot 只认 Ogg Theora）
 ```
+
+> 帧序列目录里放 `00.png` `01.png` …，文件名里的数字会按**自然顺序**排
+> （`frame10` 排在 `frame2` 之后，不是字典序）。可选放一个 `anim.json`：
+> `{ "fps": 12, "loop": true }`，不写就是 12fps 循环。目录一存在就自动生效，
+> 剧本里不用加任何指令。
 
 音频缺失时会**静默跳过**并只在控制台提示一次，不会中断游戏。
 
@@ -197,6 +204,46 @@ BGM 会自动**循环播放**，不用在导入设置里勾 Loop —— 代码�
 ```
 
 `width: 0` 表示宽度自适应内容（HUD 按钮就是这么配的）。
+
+### 调「面板外的画面压多暗」
+
+打开设置 / 存档 / 回看时，面板背后那层遮罩的深浅在 `ui_theme.json` 的 `scrim` 段：
+
+```json
+"scrim": { "color": "#08070e", "alpha": 0.55, "viewer_alpha": 0.72 }
+```
+
+`alpha` 是给小窗面板（设置 / 存档 / 回看）用的 —— 面板外大面积可见，0.55 既能拉开层次又不会把背景压死。
+`viewer_alpha` 给近满屏面板（鉴赏 / CG 详情 / 记录）—— 遮罩只露一圈边，压深一点让中间的图更突出。
+想更亮就调小，0 是完全不压暗。这些值由 `main.gd` 的 `_apply_scrims()` 统一刷到各面板名为 `Dim` 的节点上，
+新增面板只要挂一个叫 `Dim` 的 `ColorRect` 就会被自动接管。
+
+### 加开关（CheckButton）时注意状态色
+
+Godot 默认主题里 `CheckButton` 的 `font_pressed_color` / `font_hover_pressed_color`
+是**白色** —— 本项目的面板是浅色纸面，只覆盖 `font_color` 的话，
+**开关一打开、文字就变白看不见了**（hover 同理）。所以走统一入口：
+
+```gdscript
+UiTheme.apply_check_button(check, UiTheme.TEXT, 20)
+```
+
+它会把 `font_color` / `font_hover_color` / `font_pressed_color` /
+`font_hover_pressed_color` / `font_focus_color` 五个状态全部覆盖，
+禁用态用 `TEXT_DIM`。`tools/smoke.gd` 有一条守卫会**扫真实设置面板里的每个开关**，
+发现白色状态就报错。
+
+### 调 CG 详情页的留白
+
+CG 详情页的面板样式是代码自己拼的（不走面板预设），内边距在
+`data/ui/gallery_theme.json` 的 `layout` 段：
+
+```json
+"viewer_pad_h": 30, "viewer_pad_v": 26
+```
+
+这两个值曾经是 0 —— 结果 CG 图、标题文字和重播/关闭按钮全部顶到面板边框上。
+改成别的值就能调松紧，`smoke` 里有守卫盯着「内边距不能是 0」。
 
 ### 换按钮美术素材（九宫格）
 
@@ -563,6 +610,94 @@ narr 旁白时两个人都恢复明亮。
 
 只改 `modulate` 的 rgb，**不动 alpha** —— alpha 归淡入淡出管，两者不能互相踩。
 
+### 动态立绘（帧序列动画）
+
+把立绘的表情换成**帧序列目录**，它就自己动起来了 —— 剧本里不用加任何指令：
+
+```
+assets/sprites/alice/blink/00.png      # 睁眼
+assets/sprites/alice/blink/01.png      # 闭眼
+assets/sprites/alice/blink/anim.json   # 可选：{"fps": 12, "loop": true}
+```
+
+```gvs
+show alice expr=blink fade=0.4     # 直接用，自动会动
+```
+
+`anim` 指令用来控制播放：
+
+```gvs
+anim alice speed=0.5        # 慢放
+anim alice pause=true       # 定格在当前帧
+anim alice once             # 只播一遍，停在最后一帧
+anim alice frame=3          # 跳到第 3 帧（0 基）
+anim alice                  # 恢复常速循环
+```
+
+| 指令 | 作用 | 参数 |
+|---|---|---|
+| `anim <角色>` | 控制帧序列动画 | `speed` `pause` `once` `frame` |
+
+几点说明：
+
+- **Godot 内置没有动图解码器**：GIF 完全不认，APNG 只取第一帧，动画 WebP 连第一帧都解不出来。
+  所以「动态图片」的唯一可靠路线就是帧序列（实测见 `tools/anim_probe.tscn`）。
+- **带透明通道完全没问题** —— 序列帧就是普通 PNG/WebP，alpha 原样保留。
+- 帧数上限 **256**（`AnimatedTexture` 的限制），超过会只取前 256 帧并打警告。
+- 立绘节点用的还是 `TextureRect`，`AnimatedTexture` 本身就是 `Texture2D` ——
+  所以压暗、位移、缩放、**表情交叉混合**全都不受影响（实测见 `tools/media_verify.tscn`）。
+- 在静态立绘上写 `anim` 是安全的：返回 false、不报错、画面不受影响。
+
+### 过场视频
+
+```gvs
+video op                                    # 全屏播放，不阻塞，播完自动收起
+video op wait=true                          # 播完再继续剧情
+video op at=320,180 size=640,360            # 指定位置与尺寸
+video op layer=ui                           # 压在 UI 之上
+video op loop=true volume=0.5 fade=0.4      # 循环 / 音量 / 淡入
+hide_video fade=0.3                         # 淡出收掉
+```
+
+| 指令 | 作用 | 参数 |
+|---|---|---|
+| `video <id>` | 播放视频 | `at` `size` `layer` `fade` `volume` `speed` `buffer` `loop` `wait` `hide` |
+| `hide_video` | 淡出收掉 | `fade` |
+
+| 参数 | 取值 |
+|---|---|
+| `at` | `full`（默认，铺满整屏）/ `center`（按 size 居中）/ `x,y`（左上角坐标） |
+| `layer` | `world`（默认，在对话框之下）/ `ui`（盖住对话框与 HUD）/ `top`（最上层，连全屏特效一起压住） |
+| `wait` | `true` 时调度器会停在这里等播完（也可以点一下跳过） |
+| `buffer` | 起播前缓冲多少毫秒，默认 **120**（Godot 默认 500ms，实测那 0.5 秒里画面是空的 —— 过场会「先黑一下」） |
+
+**素材必须是 Ogg Theora（`.ogv`）** —— Godot 内置只认这一种，没有 H.264/H.265
+（授权原因），也不支持 WebM。转换用 ffmpeg 或 HandBrake：
+
+```bash
+ffmpeg -i input.mp4 -c:v libtheora -q:v 7 -c:a libvorbis -q:a 5 output.ogv
+```
+
+**带 alpha 的视频内置不支持**（Theora 是 YUV 4:2:0，没有 alpha 平面）。
+需要透明视频请走上面的帧序列动画；或者引入支持 WebM/VP9-alpha 的 GDExtension。
+
+另外两点：
+
+- 视频会被**拉伸到给定矩形**。设计分辨率是 1920×1080（16:9），视频也基本都是 16:9，
+  所以默认全屏不会变形；要放非 16:9 的视频，让 `size=` 与视频宽高比一致。
+- 素材缺失时**不会卡死**：会打一条 warning，`wait=true` 也照样放行
+  （实测见 `tools/media_verify.tscn`）。
+
+**真机验证过的行为**（`tools/video_verify.tscn`，用 ffmpeg 生成的测试 `.ogv`）：
+
+| 验的是 | 结果 |
+|---|---|
+| 画面在推进 | 白条位置每 0.4s 前进 192 设计像素 = 480px/s，与素材（80 源像素/s × 6 倍缩放）**精确吻合** |
+| 指定位置 / 尺寸 | 播放器矩形 `(320,180) 640×360`，矩形内是视频、矩形外仍是背景 |
+| **有没有 alpha** | 视频区实测 `(0,255,2)`、背景洋红 `(255,0,255)` —— **没有一丝背景混入**，Theora 确实不透 |
+| 播完 | `finished` 发出、视频自动收起（`is_playing=false` / `visible=false`） |
+| `wait=true` | 进 `waiting_video`，播完自动放行到下一条对白 |
+
 ### 转场
 
 背景和 CG 都支持四种转场，用 `type=` 指定：
@@ -666,6 +801,12 @@ bg_motion scale=1.0 duration=2.0                            # 收回
 
 天气是 GPU 粒子 + 程序化生成的贴图，**不需要任何素材文件**。运镜作用在包住两层背景的容器上 ——
 转场时两层正在交叉，只动其中一层会露馅。
+
+### 动态立绘与过场视频
+
+见前面「改素材 → 帧序列目录」与「演出 → 动态立绘 / 过场视频」两节。要点：
+**帧序列目录一存在就自动生效**（立绘会动，剧本不用改）；**视频必须是 `.ogv`**，
+且可以用 `layer=` 精确控制压在 UI 之下还是之上。
 
 ### 语音
 
@@ -794,10 +935,41 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 | 守卫 | 守什么 |
 |---|---|
 | 着色器静态检查 | 入口函数里不许出现 `return`（违反时 shader 编译失败，但逻辑测试照样全绿） |
+| 着色器 modulate 守卫 | 给 `COLOR` 赋值时**不许**再乘一遍进来的 `COLOR`（重复叠加 modulate 会把整层压暗：`char_expr` 约 −40%、`transition` 约 −35%，都是像素级才能发现的问题） |
 | 架构守卫 | 分层规则：`core`/`autoload` 不许碰表现层；表现层不许反向抓编排层；剧本路径只许出现在 `ScriptPaths` |
 
 两个守卫都带**自检**（喂合成源码确认它们抓得到违规、且不误报注释与字符串）——
 一个从不失败的守卫等于没有守卫。
+
+画面类问题还有几个**探针**（跑完打印像素级实测值，比肉眼看截图可靠）：
+
+```bash
+# 立绘：表情材质挂上前后的渲染色是否一致（能抓出「一挂材质就变暗」）
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/char_shader_probe.tscn
+
+# 转场遮罩：progress 0/0.5/1 × 四种模式的渲染色保真度（自带「坏写法必须能量出变暗」的自检）
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/mask_fidelity_probe.tscn
+
+# 端到端验收：面板外的压暗程度 + 四种转场中途的保真度
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/fix_verify.tscn
+
+# 生成「修复前/修复后」对比截图（存到 user://）
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/fix_compare.tscn
+
+# 媒体能力实测：动图格式能不能直接播、两条动画路线并排对比、AnimatedTexture 当采样器
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/anim_probe.tscn
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/anim_route_probe.tscn
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/anim_sampler_probe.tscn
+
+# 视频 / 动态立绘的端到端验收（图层映射、缺失素材不卡死、动态立绘渲染 + 表情过渡）
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/media_verify.tscn
+
+# 真机播 .ogv（画面推进 / 位置尺寸 / 有没有 alpha / finished / wait 阻塞）
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/video_verify.tscn
+
+# 引擎能力清单（有哪些类、认哪些后缀）
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/capability_probe.tscn
+```
 
 **纯逻辑测试看不见布局问题**：面板被撑成两倍大、整个被顶到画布外面，`visible` 依然是
 `true`。所以除了量尺寸的断言，改完界面一定要跑一次 `capture` 肉眼看图 ——
@@ -818,7 +990,8 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 | `scripts/core/collection_registry.gd` | 收藏品注册表 |
 | `scripts/core/gallery_theme.gd` | 鉴赏界面主题 |
 | `scripts/autoload/` | Config / Game / Collection / Audio / Save |
-| `scripts/stage/stage.gd` | 演出层（背景 / 立绘 / CG / 转场） |
+| `scripts/stage/stage.gd` | 演出层（背景 / 立绘 / CG / 转场 / 帧序列动画） |
+| `scripts/stage/video_screen.gd` | 过场视频层（Ogg Theora，可指定位置与图层） |
 | `scripts/stage/screen_fx.gd` | 全屏特效层（在 UI 之上，连对话框一起变形） |
 | `shaders/` | 转场遮罩、立绘表情过渡、全屏特效 |
 | `scripts/ui/` | 全部界面 |

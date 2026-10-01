@@ -503,6 +503,44 @@ func is_char_visible(char_id: String) -> bool:
 	return (_chars[char_id]["rect"] as TextureRect).visible
 
 
+## 供自动化测试 / 调试使用：取某个立绘节点上的材质
+## （检查表情交叉混合的 progress / has_from 是否卡住时用）
+func get_char_material(char_id: String) -> Material:
+	if not _chars.has(char_id):
+		return null
+	return (_chars[char_id]["rect"] as TextureRect).material
+
+
+## 取某个立绘当前的帧序列动画（不是动画素材时返回 null）
+func get_char_anim(char_id: String) -> AnimatedTexture:
+	if not _chars.has(char_id):
+		return null
+	return (_chars[char_id]["rect"] as TextureRect).texture as AnimatedTexture
+
+
+## 控制立绘的帧序列动画。
+##
+## 只有素材是「帧序列目录」时才有意义 —— 立绘贴图得是 AnimatedTexture。
+## 静态立绘上调用它返回 false 且**不报错**：剧本里 `anim` 常常是对一整个
+## 场景的角色统一生效，其中有人是静态立绘完全正常。
+##
+##   speed —— 播放速度倍率（1.0 = 素材在 anim.json 里声明的帧率）
+##   pause —— 定格在当前帧
+##   once  —— 只播一遍，停在最后一帧
+##   frame —— 跳到指定帧（0 基；-1 表示不动）
+func set_char_anim(char_id: String, speed: float = 1.0, pause: bool = false,
+		once: bool = false, frame: int = -1) -> bool:
+	var anim := get_char_anim(char_id)
+	if anim == null:
+		return false
+	anim.speed_scale = maxf(0.01, speed)
+	anim.one_shot = once
+	anim.pause = pause
+	if frame >= 0:
+		anim.current_frame = clampi(frame, 0, maxi(0, anim.frames - 1))
+	return true
+
+
 func move_char(char_id: String, at: String, duration: float = 0.35,
 		ease_name: String = DEFAULT_EASE) -> void:
 	if not _chars.has(char_id):

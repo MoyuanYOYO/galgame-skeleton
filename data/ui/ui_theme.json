@@ -208,6 +208,12 @@
     "dim_inactive": 0.55,
     "dim_duration": 0.22
   },
+  "scrim": {
+    "_comment": "模态面板背后的压暗遮罩。alpha 越小，面板外的画面越亮 —— 0.55 左右既能拉开层次，又不会把背景压死（以前写死 0.88 时小窗一开背景几乎全黑）。viewer_alpha 用在鉴赏 / CG 详情 / 记录这类近满屏面板上：遮罩只露一圈边，可以压深一点让中间的图更突出。",
+    "color": "#08070e",
+    "alpha": 0.55,
+    "viewer_alpha": 0.72
+  },
   "title": {
     "_comment": "标题画面底板：bg 是照片（空 / 加载失败回退纯 BG_DEEP 色底），scrim 是压在照片上的暖色纱罩。",
     "bg": "res://assets/bg/street.png",

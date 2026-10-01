@@ -29,7 +29,9 @@
 	"tab_font_size": 24,
 	"card_title_font_size": 20,
 	"track_font_size": 20,
-	"button_font_size": 22
+	"button_font_size": 22,
+	"viewer_pad_h": 30,
+	"viewer_pad_v": 26
   },
 
   "text": {

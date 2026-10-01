@@ -15,6 +15,10 @@ const SLIDERS: Array = [
 	{"key": "voice_volume", "label": "语音", "min": 0.0, "max": 1.0, "step": 0.05, "display": "percent"},
 ]
 
+## 设置行的正文字号。跟其他功能窗口的正文对齐（存档 / 记录 / 回看都是 19~20），
+## 原来用 22 会显得比别处大一号。
+const ROW_FONT_SIZE := 20
+
 const TOGGLES: Array = [
 	{"key": "fullscreen", "label": "全屏显示"},
 	{"key": "skip_unread", "label": "允许跳过未读文本"},
@@ -90,7 +94,7 @@ func _make_language_row() -> HBoxContainer:
 	name_label.text = I18n.t("语言")
 	name_label.custom_minimum_size = Vector2(220.0, 0.0)
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UiTheme.apply_label(name_label, UiTheme.TEXT_DIM, 22)
+	UiTheme.apply_label(name_label, UiTheme.TEXT, ROW_FONT_SIZE)
 	row.add_child(name_label)
 
 	var select := OptionButton.new()
@@ -128,7 +132,7 @@ func _make_slider_row(spec: Dictionary) -> HBoxContainer:
 	name_label.text = String(spec["label"])
 	name_label.custom_minimum_size = Vector2(220.0, 0.0)
 	name_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	UiTheme.apply_label(name_label, UiTheme.TEXT_DIM, 22)
+	UiTheme.apply_label(name_label, UiTheme.TEXT, ROW_FONT_SIZE)
 	row.add_child(name_label)
 
 	var slider := HSlider.new()
@@ -149,7 +153,7 @@ func _make_slider_row(spec: Dictionary) -> HBoxContainer:
 	value_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	value_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 	value_label.text = _format_value(String(spec["display"]), slider.value)
-	UiTheme.apply_label(value_label, UiTheme.TEXT, 22)
+	UiTheme.apply_label(value_label, UiTheme.TEXT, ROW_FONT_SIZE)
 	row.add_child(value_label)
 
 	slider.value_changed.connect(_on_slider_changed.bind(key, String(spec["display"]), value_label))
@@ -166,9 +170,10 @@ func _make_toggle_row(spec: Dictionary) -> HBoxContainer:
 	var check := CheckButton.new()
 	check.text = String(spec["label"])
 	check.button_pressed = bool(ConfigManager.get_value(key, false))
-	check.add_theme_color_override("font_color", UiTheme.TEXT)
-	check.add_theme_color_override("font_hover_color", Color.WHITE)
-	check.add_theme_font_size_override("font_size", 22)
+	# 走统一的开关样式：六个状态色全部覆盖。
+	# 以前只写了 font_color，还把 hover 显式设成白色 —— 浅色面板上
+	# 「开关打开 / 鼠标悬停」时文字就变白看不见了。
+	UiTheme.apply_check_button(check, UiTheme.TEXT, ROW_FONT_SIZE)
 	check.toggled.connect(_on_toggled.bind(key))
 	row.add_child(check)
 	_toggle_nodes[key] = check

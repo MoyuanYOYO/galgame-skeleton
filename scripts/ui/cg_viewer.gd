@@ -24,8 +24,13 @@ func _ready() -> void:
 	visible = false
 
 	var font_size := GalleryTheme.count("button_font_size", 22)
+	# 内边距不能是 0：这个面板的 stylebox 是自己拼的（不走 apply_panel 的预设），
+	# 之前 pad_h / pad_v 都传了 0 —— CG 图、标题文字和按钮于是全部顶到边框上。
+	var pad_h := GalleryTheme.count("viewer_pad_h", 30)
+	var pad_v := GalleryTheme.count("viewer_pad_v", 26)
 	_panel.add_theme_stylebox_override("panel", UiTheme.stylebox(
-		GalleryTheme.color("panel"), 20, GalleryTheme.color("panel_border"), 1, 0, 0))
+		GalleryTheme.color("panel"), 20, GalleryTheme.color("panel_border"), 1,
+		pad_h, pad_v))
 	_title.add_theme_font_size_override("font_size", 28)
 	_title.add_theme_color_override("font_color", GalleryTheme.color("text"))
 	_hint.add_theme_font_size_override("font_size", font_size - 4)

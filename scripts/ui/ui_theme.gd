@@ -168,6 +168,26 @@ static func stage_value(key: String, fallback: float) -> float:
 	return fallback if raw == null else float(raw)
 
 
+## 模态面板背后的压暗遮罩色。
+##
+## viewer = false：设置 / 存档 / 回看这类「小窗」面板 —— 遮罩大面积可见，
+## 用它来定「面板外的画面压多暗」。默认 0.55：既能拉开层次，又不会把背景压死。
+## viewer = true ：鉴赏 / CG 详情 / 记录这类近满屏面板 —— 遮罩只露一圈边，
+## 压得深一点反而让中间的图更突出。
+##
+## 这两个值以前写死在 main.tscn 的 Dim 节点上（0.88 ~ 0.97），
+## 小窗面板一开背景几乎全黑。现在统一走 ui_theme.json 的 scrim 段。
+static func scrim_color(viewer: bool = false) -> Color:
+	_ensure()
+	var cfg := section("scrim")
+	var fallback := Color(0.031, 0.027, 0.055, 0.55 if not viewer else 0.72)
+	var out := _color(cfg, "color", fallback)
+	var alpha_key := "viewer_alpha" if viewer else "alpha"
+	var raw: Variant = cfg.get(alpha_key, null)
+	out.a = fallback.a if raw == null else float(raw)
+	return out
+
+
 static func preset(name: String) -> Dictionary:
 	_ensure()
 	var raw: Variant = section("buttons").get(name, {})
@@ -616,6 +636,26 @@ static func apply_label(label: Label, color: Color = TEXT, font_size: int = 22,
 		label.add_theme_font_size_override("font_size", font_size)
 	if not font_key.is_empty():
 		apply_font(label, font_key)
+
+
+## 开关（CheckButton）的文字样式。
+##
+## **必须把六个状态色全部显式覆盖。** Godot 默认主题里 CheckButton 的
+## `font_pressed_color` / `font_hover_pressed_color` 是**白色** —— 本项目的面板是
+## 浅色纸面，于是「开关一打开，文字就变白、看不见了」。hover 同理。
+## 只覆盖 font_color 是不够的，这是踩过的坑。
+##
+## 注意这里不能像 apply_label 那样「有 override 就跳过」：默认主题的颜色**不算
+## override**，跳过就等于没改。
+static func apply_check_button(check: CheckButton, color: Color = TEXT,
+		font_size: int = 20, font_key: String = "") -> void:
+	for key in ["font_color", "font_hover_color", "font_pressed_color",
+			"font_hover_pressed_color", "font_focus_color"]:
+		check.add_theme_color_override(key, color)
+	check.add_theme_color_override("font_disabled_color", TEXT_DIM)
+	check.add_theme_font_size_override("font_size", font_size)
+	if not font_key.is_empty():
+		apply_font(check, font_key)
 
 
 static func apply_rich_text(label: RichTextLabel, color: Color = TEXT,

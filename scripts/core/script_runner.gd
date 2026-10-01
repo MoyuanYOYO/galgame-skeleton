@@ -28,6 +28,7 @@ enum State {
 	WAITING_TIMER,
 	WAITING_CLICK,
 	WAITING_MINIGAME,
+	WAITING_VIDEO,
 	ENDED,
 }
 
@@ -36,7 +37,7 @@ const ENDING_REPLAY_DONE := "__replay_done__"
 
 const STATE_NAMES: PackedStringArray = [
 	"idle", "running", "waiting_say", "waiting_choice",
-	"waiting_timer", "waiting_click", "waiting_minigame", "ended",
+	"waiting_timer", "waiting_click", "waiting_minigame", "waiting_video", "ended",
 ]
 
 var parse_errors: Array = []
@@ -199,6 +200,17 @@ func submit_minigame(result: Dictionary) -> void:
 	_step()
 
 
+## 视频播完了（剧本写了 wait=true 时才会进入等待态）。
+##
+## 和 submit_minigame 同一个套路：阻塞型指令必须由外部显式放行，
+## 否则调度器会一路冲过演出，把后面的对白提前弹出来。
+func submit_video_finished() -> void:
+	if _state != State.WAITING_VIDEO:
+		return
+	_state = State.RUNNING
+	_step()
+
+
 # ---------------------------------------------------------------------------
 # 状态查询
 # ---------------------------------------------------------------------------
@@ -219,10 +231,14 @@ func is_waiting_minigame() -> bool:
 	return _state == State.WAITING_MINIGAME
 
 
+func is_waiting_video() -> bool:
+	return _state == State.WAITING_VIDEO
+
+
 func is_blocked() -> bool:
 	return _state in [
 		State.WAITING_SAY, State.WAITING_CHOICE, State.WAITING_TIMER,
-		State.WAITING_CLICK, State.WAITING_MINIGAME,
+		State.WAITING_CLICK, State.WAITING_MINIGAME, State.WAITING_VIDEO,
 	]
 
 
@@ -329,6 +345,18 @@ func _execute(cmd: Dictionary) -> void:
 		"bg", "show", "hide", "move", "expr", "clear", "hide_cg":
 			stage_command.emit(cmd)
 		"hop", "zoom", "shake", "screen_shake", "screen_flash", "screen_fx", "bg_motion", "weather":
+			stage_command.emit(cmd)
+		"anim":
+			stage_command.emit(cmd)
+		"video":
+			# wait=true 表示「播完再继续」——先把状态置成等待，再发指令。
+			# 顺序不能反：main.gd 是同步处理这条指令的，若它当场发现素材缺失
+			# 会立刻回调 submit_video_finished()，那时状态还没置上的话就漏掉了，
+			# 调度器会永远卡在等待态。
+			if bool(cmd.get("wait", false)):
+				_state = State.WAITING_VIDEO
+			stage_command.emit(cmd)
+		"hide_video":
 			stage_command.emit(cmd)
 		"cg":
 			# 展示 CG 的同时把它计入收藏
