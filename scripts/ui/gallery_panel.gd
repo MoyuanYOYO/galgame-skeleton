@@ -47,8 +47,10 @@ func _ready() -> void:
 	_progress.add_theme_font_size_override("font_size", 20)
 	_progress.add_theme_color_override("font_color", GalleryTheme.color("text_dim"))
 
-	_panel.add_theme_stylebox_override("panel", UiTheme.stylebox(
-		GalleryTheme.color("panel"), 20, GalleryTheme.color("panel_border"), 1, 0, 0))
+	# 走 apply_panel 这一套，别再手写 stylebox —— 之前这里把内边距硬编码成 (0, 0)，
+	# 结果鉴赏面板的文字全贴到边上，而且面板贴图也套不上来。
+	_panel.add_theme_stylebox_override("panel", UiTheme.panel_stylebox(
+		"gallery", GalleryTheme.color("panel")))
 
 	_tab_active = UiTheme.stylebox(
 		Color(GalleryTheme.color("accent").r, GalleryTheme.color("accent").g,

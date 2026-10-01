@@ -243,6 +243,7 @@ ending good "并肩的归途"
 | `shake` | `shake <角色> [strength=] [times=] [duration=]` | 立绘抖动 |
 | `screen_shake` | `screen_shake [strength=] [times=] [duration=]` | 全屏震动（舞台与 UI 一起抖） |
 | `screen_flash` | `screen_flash [color=] [duration=]` | 全屏闪光 |
+| `screen_fx` | `screen_fx <种类\|none> [strength=] [duration=]` | 全屏后处理：错乱 / 扭曲 / 马赛克 / 色差 / 反色 / 模糊（**连 UI 一起变形**） |
 | `bg_motion` | `bg_motion [scale=] [x=] [y=] [duration=] [ease=]` | 背景缓慢推拉运镜 |
 | `weather` | `weather <none\|rain\|snow\|sakura> [intensity=]` | 天气粒子 |
 | `clear` | `clear` | 清空背景与立绘 |
@@ -739,8 +740,12 @@ HBoxContainer
 做决定的两个点；其余指令（`bg` / `show` / `affection` …）都夹在其间，跟着最近的一格一起还原。
 
 **记什么**：调度器位置（file / ip / call_stack）、软状态（`GameManager.to_dict()`）、
-画面（`stage.get_state()`，含晴雨天气）、当前说话人与文本、语音 id、回看记录长度。
-一份只有几百字节，容量 100 格。
+画面（`stage.get_state()`，含晴雨天气）、当前说话人与文本、语音 id、回看记录长度、
+以及全屏特效的种类与强度。一份只有几百字节，容量 100 格。
+
+特效单独带一份、而不是塞进 `stage.get_state()`，因为那个形状**存档也要用**，
+而特效是瞬时状态、不该跟着存档走（读档进来不该屏幕上还糊着错乱）。
+但它必须进回滚快照：往回翻一句就把十行前设的持续特效抹掉，玩家会以为是自己看错了。
 
 **怎么还原**：走和读档**完全相同**的路径 —— `runner.restore_state()` 让调度器重新执行
 那条指令，对白 / 选项于是自己重新出现。不为回滚另写一套展示逻辑，两者就不会各自漂移。
@@ -755,6 +760,58 @@ HBoxContainer
 
 **不还原的东西**（见第十二节）：`bg_motion` 的镜头位置会被 `clear()` 复位；天气只还原种类、
 不还原强度；正在播的 BGM 不受影响（既不重播也不停止）。
+
+---
+
+### 5.17 全屏特效（ScreenFx）
+
+`scripts/stage/screen_fx.gd` + `shaders/screen_fx.gdshader` + `scripts/core/screen_fx_spec.gd`。
+
+**为什么单独一层排在 UI 之上。** 场景里 `StageLayer` 是 0、`UILayer` 是 10、
+`MinigameLayer` 是 20，特效层 `FxLayer` 拿的是 **30**。
+
+这一条是整个功能的关键，而不是随手排的。全屏后处理读的是「**那一刻已经画好的整屏**」，
+所以它必须排在它想影响的东西**后面**：
+
+- 排在 `StageLayer` 里（跟 `Stage` 同层）→ 只能读到背景 / 立绘，对话框纹丝不动地浮在
+  扭曲的画面外面，像贴纸；
+- 排在 UI 之上 → 对话框、HUD、小游戏一起变形，「整个世界不对劲」才成立。
+
+这也是它必须**另起一层**、而不能塞进 `Stage` 的原因：`Stage` 自己就在 0 层里。
+
+**BackBufferCopy 为什么是必须的，且必须紧挨着排在前面。**
+`hint_screen_texture` 读的是 back buffer，而 back buffer 由 `BackBufferCopy` 在它**自己的
+绘制时刻**填充。放在特效的后面（或做成它的子节点）就太晚了 —— 读到的是一张空图，
+结果是整屏变黑。所以 `_ensure_copy()` 建出它之后立刻 `move_child(copy, get_index())`，
+把它插到自己前面一位。
+
+**为什么是惰性创建。** 第一版在 `_ready()` 里建，结果报
+`Parent node is busy setting up children, add_child() failed` —— 场景实例化时父节点
+正忙着装配子节点，此时加兄弟会被拒，紧接着 `move_child()` 还会因为「不是它的子节点」
+再报一次。改成首次 `play()` 时（父节点早就装配完了）才建，顺带还有个好处：
+**没有特效的时候这个节点根本不存在**，也就没有每帧一次的全屏拷贝开销。
+`_sync_visibility()` 是唯一决定可见性的地方，它同时开关 `BackBufferCopy.copy_mode`，
+避免出现「看不见但每帧都在全屏拷贝」的层。
+
+**两种语义。** `duration > 0` 是脉冲：15% 时长冲上去（错乱要「啪」地一下），
+剩下 85% 用 `EASE_IN` 收干净。`duration <= 0` 是持续，一直挂到显式关闭。
+关闭统一走 `screen_fx none`，和 `weather none` 一个写法，不另发明一条 `off`。
+
+**未知种类当场报错。** 解析器对 `screen_fx` 的非法种类**直接报错**，没有沿用 `weather`
+那种静默降级成 `none` 的做法。理由：种类是封闭的小集合，写错基本只有「拼错」一种可能，
+而静默降级的后果正是本项目最忌讳的那类 bug ——「剧本写了、演出就是不出来」，
+只有控制台一行 warning。`tools/audit` 会把它变成 CI 的非零退出码。
+
+**模态面板自动压下。** 特效层在 UI 之上意味着打开设置面板时，玩家正在读的那一屏
+会被一起糊掉 —— 那恰恰是最不该糊的。所以 `main.gd` 把各个面板的 `visibility_changed`
+统一接到 `_refresh_fx_suspension()`：只要有面板显示就 `set_suspended(true)`（只是不显示，
+**强度保留**），全关掉后原样接着演，长镜头不会被打断。
+挂信号而不是在每个开关处各写一行 —— 面板的入口太多（按钮 / 快捷键 / 标题界面 / 剧本），
+漏一处就是一个「面板糊了」的 bug。
+
+**复位点。** 新开局 / 读档 / 重播结束 / 回标题都会 `clear()`：这些都是「跳到了别处」，
+残留一层扭曲会一直糊在新画面上。回滚是例外 —— 它从快照里**原样还原**特效，
+而不是清掉。
 
 ---
 
@@ -851,6 +908,7 @@ galgame/
 │   │   ├── script_runner.gd         指令流状态机（含重播模式）
 │   │   ├── script_paths.gd          剧本文件位置（含语言子目录解析）的唯一权威
 │   │   ├── rollback_buffer.gd       回滚历史缓冲（快照环形队列 + 游标）
+│   │   ├── screen_fx_spec.gd        全屏特效种类表（解析器与演出层共用）
 │   │   ├── typing_timeline.gd       打字节奏编译器（停顿 / 变速 → 时间轴）
 │   │   ├── minigame_registry.gd     小游戏注册表
 │   │   ├── collection_registry.gd   收藏品注册表
@@ -859,15 +917,17 @@ galgame/
 │   │   └── placeholder_assets.gd    占位素材生成（背景 / 立绘 / CG）
 │   ├── autoload/                    Config / Game / Collection / Audio / Save / ReadTracker
 │   ├── stage/stage.gd               演出层（背景 / 立绘 / CG / 转场）
+│   ├── stage/screen_fx.gd           全屏特效层（排在 UI 之上）
 │   ├── ui/                          对话框 / 选项 / 回看 / 设置 / 存读 / 标题
 │   │   │                            / 鉴赏 / CG 详情 / 音乐 / 唱片 / 频谱 / 锁图标 / 主题
 │   │   └── text_effects/            自定义文字特效（弹跳 / 错乱 / 闪烁）
 │   └── minigames/                   基类 + 节奏 QTE
 ├── shaders/
 │   ├── transition.gdshader          转场遮罩（溶解 / 擦除 / 百叶窗 / 圆形）
+│   ├── screen_fx.gdshader           全屏后处理（错乱 / 扭曲 / 马赛克 / 色差 / 反色 / 模糊）
 │   └── char_expr.gdshader           立绘表情交叉过渡
 └── tools/
-    ├── smoke.gd / smoke.tscn        headless 回归测试（603 项断言）
+    ├── smoke.gd / smoke.tscn        headless 回归测试（643 项断言）
     ├── capture.gd / capture.tscn    自动截图工具（14 张）
     ├── button_compare.tscn          按钮样式前后对比（拼接图）
     ├── text_fx_demo.tscn            文字特效多帧演示（拼接图）
@@ -924,10 +984,10 @@ Main (Control)
 ## 十、验证
 
 ```bash
-# 回归测试 · headless（603 项断言，快，适合 CI）
+# 回归测试 · headless（643 项断言，快，适合 CI）
 "D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/smoke.tscn
 
-# 回归测试 · 窗口模式（608 项，多覆盖「真实输入模拟」一节）
+# 回归测试 · 窗口模式（648 项，多覆盖「真实输入模拟」一节）
 "D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/smoke.tscn
 
 # 自动截图（窗口模式，14 张）
@@ -943,11 +1003,11 @@ Main (Control)
 "D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/motion_demo.tscn
 ```
 
-冒烟测试覆盖：Autoload 注册 → 剧本解析与跳转回填 → **外观配置（配色 / 字号 / 按钮预设 / 九宫格贴图通路 / 未定义预设回退 / 文字颜色覆盖 / 按钮音效挂载与触发链路）** → **文字特效与打字节奏（时间轴编译、停顿、变速、标签剥离、边界与精度、二分查表、特效注册与时间片行为）** → **演出动效（hop / zoom / shake / screen_shake / screen_flash 的解析与行为、缓动生效、被打断后从基准位重启、clear 复位）** → 调度器控制流（if/else、choice、call/return、flag、affection、minigame、ending）→ 存档往返（含 JSON 整数还原）→ 立绘定位 → 序章端到端跑通并断言最终好感度为 44 → 自动播放/跳过的连续性 → 标题读档 → 「继续游戏」恢复精度 → 鉴赏系统（注册表、主题、解锁语义、落盘往返、锁图标数量、曲目高亮、可视化控件）与剧情重播（片段边界、快照还原、自动存档闸门）→ **转场遮罩与滑入滑出（四种转场模式映射、滑入起点在屏幕外、滑入时 alpha 给满、剧本 type 参数解析）** → **多立绘协同（说话人亮 / 他人压暗 / 旁白全亮）** → **玩家便利（已读追踪、跳过已读语义、已读文本变暗、存档删除与覆盖确认、存档缩略图读写与清理、隐藏 UI）** → **回滚（缓冲区边界与分支截断、快照采集、回退 / 前进、退到选项处改选、滚轮输入、设置开关）** → **音频（BGM 循环开关、语音队列的入队 / 接力 / 打断 / 缺素材跳过）** → **标记不外漏（回看 / 存档预览里不得残留 `[wait]` `[speed]`）** → **剧本路径解析（语言回退、逻辑路径不变、非剧本路径放过）** → **着色器静态检查（入口函数不得出现 return）** → **架构守卫（分层规则 + 守卫自检）** → **真实输入模拟** → **指令端到端覆盖（每条指令都真的经调度器跑一遍）**。
+冒烟测试覆盖：Autoload 注册 → 剧本解析与跳转回填 → **外观配置（配色 / 字号 / 按钮预设 / 九宫格贴图通路 / 未定义预设回退 / 文字颜色覆盖 / 按钮音效挂载与触发链路）** → **文字特效与打字节奏（时间轴编译、停顿、变速、标签剥离、边界与精度、二分查表、特效注册与时间片行为）** → **演出动效（hop / zoom / shake / screen_shake / screen_flash / screen_fx 的解析与行为、缓动生效、被打断后从基准位重启、clear 复位）** → 调度器控制流（if/else、choice、call/return、flag、affection、minigame、ending）→ 存档往返（含 JSON 整数还原）→ 立绘定位 → 序章端到端跑通并断言最终好感度为 44 → 自动播放/跳过的连续性 → 标题读档 → 「继续游戏」恢复精度 → 鉴赏系统（注册表、主题、解锁语义、落盘往返、锁图标数量、曲目高亮、可视化控件）与剧情重播（片段边界、快照还原、自动存档闸门）→ **转场遮罩与滑入滑出（四种转场模式映射、滑入起点在屏幕外、滑入时 alpha 给满、剧本 type 参数解析）** → **多立绘协同（说话人亮 / 他人压暗 / 旁白全亮）** → **玩家便利（已读追踪、跳过已读语义、已读文本变暗、存档删除与覆盖确认、存档缩略图读写与清理、隐藏 UI）** → **回滚（缓冲区边界与分支截断、快照采集、回退 / 前进、退到选项处改选、滚轮输入、设置开关）** → **音频（BGM 循环开关、语音队列的入队 / 接力 / 打断 / 缺素材跳过）** → **标记不外漏（回看 / 存档预览里不得残留 `[wait]` `[speed]`）** → **剧本路径解析（语言回退、逻辑路径不变、非剧本路径放过）** → **全屏特效（种类表与 mode 一一对应、持续 / 脉冲两种语义、层必须排在 UI 之上、BackBufferCopy 恰好在前一位、未知种类被拒且不顶掉当前特效、模态面板自动压下、四个复位点、回滚能还原）** → **着色器静态检查（入口函数不得出现 return）** → **架构守卫（分层规则 + 守卫自检）** → **真实输入模拟** → **指令端到端覆盖（每条指令都真的经调度器跑一遍）**。
 
 **关于「指令端到端覆盖」**：第 18 节针对一类特定 bug —— 解析器认识某条指令、调度器却没给它转发分支。
 表现是「剧本写对了，演出就是不出来」，不崩不报错，只有一条 `push_warning`。
-`hop / zoom / shake / screen_shake / screen_flash / bg_motion / weather / voice` 八条就曾这样静默失效过。
+`hop / zoom / shake / screen_shake / screen_flash / screen_fx / bg_motion / weather / voice` 九条就曾这样静默失效过。
 
 **关于「着色器静态检查」**：第 22 节针对另一类同样「测试看不见」的 bug —— Godot 的着色语言
 不允许在 `fragment()` / `vertex()` 里用 `return`，违反时着色器**编译失败**，但逻辑测试照常全绿，
@@ -1011,7 +1071,7 @@ Main (Control)
 | 限制 | 说明 | 建议路线 |
 |---|---|---|
 | ~~无 rollback~~ **已实现** | 滚轮前后翻历史，还原软状态与画面，退到选项处可改选。设计见 5.16，测试见 smoke 第 20 / 21 节 | — |
-| 回滚不还原运镜与 BGM | 快照只存背景 / 立绘 / CG / 天气；`bg_motion` 的镜头位置会被复位，BGM 不重播也不停 | 需要时把 BGM id 与运镜目标一并纳入快照，并在还原后按目标值重设 |
+| 回滚不还原运镜与 BGM | 快照存背景 / 立绘 / CG / 天气 / 全屏特效；`bg_motion` 的镜头位置会被复位，BGM 不重播也不停 | 需要时把 BGM id 与运镜目标一并纳入快照，并在还原后按目标值重设 |
 | 小游戏期间不可回滚 | 小游戏是独立场景，翻历史会打乱它的进度指针，故直接拒绝 | 把「小游戏之前那一句」当作落点，而不是小游戏本身 |
 | 界面已 i18n，剧本尚无多语言 | 界面文案走 `data/i18n/`；剧本**路径解析**已经支持语言子目录（`ScriptPaths`），缺的只是译文内容本身 | 在 `data/scripts/<lang>/` 下放同名 `.gvs`（缺哪个回退哪个），`chapters.json` 同理 |
 | ~~语音无队列~~ **已实现** | 同句多条 `voice` 依次播完；换句打断并清队列；缺素材静默跳过。见 5.5 与 smoke 第 23 节 | — |

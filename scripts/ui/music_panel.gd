@@ -44,6 +44,17 @@ func _ready() -> void:
 	# 曲名 / 艺术家 / 时间是内容，不参与界面翻译
 	for n in [_track_list, _now_playing, _artist, _time]:
 		(n as Control).set_meta(I18n.META_SKIP, true)
+	# 这些标签在场景里没配颜色（旧暗底面板靠默认白字），换浅色主题后
+	# 必须跟着 gallery_theme.json 走，否则奶油底上是白字看不见。
+	# ListHeader 没有 unique_name_in_owner，只能走直接路径（%ListHeader 会抛
+	# Node not found，把整个 _ready 带崩 —— 踩过）。
+	var list_header := get_node_or_null("Body/Left/ListHeader") as Label
+	if list_header != null:
+		list_header.add_theme_color_override(
+			"font_color", GalleryTheme.color("text_dim"))
+	for n in [_now_playing, _artist, _time]:
+		(n as Label).add_theme_color_override(
+			"font_color", GalleryTheme.color("text"))
 	refresh()
 
 

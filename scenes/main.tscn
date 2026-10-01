@@ -1,18 +1,19 @@
-[gd_scene load_steps=12 format=3]
+[gd_scene format=3 uid="uid://bwo7h1nwt5gxm"]
 
-[ext_resource type="Script" path="res://scripts/main.gd" id="1_main"]
-[ext_resource type="Script" path="res://scripts/stage/stage.gd" id="2_stage"]
-[ext_resource type="Script" path="res://scripts/ui/dialogue_box.gd" id="3_dialogue"]
-[ext_resource type="Script" path="res://scripts/ui/choice_panel.gd" id="4_choice"]
-[ext_resource type="Script" path="res://scripts/ui/backlog_panel.gd" id="5_backlog"]
-[ext_resource type="Script" path="res://scripts/ui/settings_panel.gd" id="6_settings"]
-[ext_resource type="Script" path="res://scripts/ui/save_load_panel.gd" id="7_saveload"]
-[ext_resource type="Script" path="res://scripts/ui/title_screen.gd" id="8_title"]
-[ext_resource type="Script" path="res://scripts/ui/gallery_panel.gd" id="9_gallery"]
-[ext_resource type="Script" path="res://scripts/ui/music_panel.gd" id="10_music"]
-[ext_resource type="Script" path="res://scripts/ui/cg_viewer.gd" id="11_cgviewer"]
+[ext_resource type="Script" uid="uid://dxvyiily8hbkx" path="res://scripts/main.gd" id="1_main"]
+[ext_resource type="Script" uid="uid://bjljdpup2tscp" path="res://scripts/stage/stage.gd" id="2_stage"]
+[ext_resource type="Script" uid="uid://bflq86tq64mfr" path="res://scripts/ui/dialogue_box.gd" id="3_dialogue"]
+[ext_resource type="Script" uid="uid://0f7m5bov4xuy" path="res://scripts/ui/choice_panel.gd" id="4_choice"]
+[ext_resource type="Script" uid="uid://dp2301h61ie3g" path="res://scripts/ui/backlog_panel.gd" id="5_backlog"]
+[ext_resource type="Script" uid="uid://b81u2qkeqeaoy" path="res://scripts/ui/settings_panel.gd" id="6_settings"]
+[ext_resource type="Script" uid="uid://buqtg6mjlkcab" path="res://scripts/ui/save_load_panel.gd" id="7_saveload"]
+[ext_resource type="Script" uid="uid://bkgpkqt46xqxr" path="res://scripts/ui/title_screen.gd" id="8_title"]
+[ext_resource type="Script" uid="uid://bjx686bp8la1w" path="res://scripts/ui/gallery_panel.gd" id="9_gallery"]
+[ext_resource type="Script" uid="uid://bf07ljpi5nhmp" path="res://scripts/ui/music_panel.gd" id="10_music"]
+[ext_resource type="Script" uid="uid://ciptuwpx3lk3u" path="res://scripts/ui/cg_viewer.gd" id="11_cgviewer"]
+[ext_resource type="Script" uid="uid://utvwrvwhrog" path="res://scripts/stage/screen_fx.gd" id="12_screenfx"]
 
-[node name="Main" type="Control"]
+[node name="Main" type="Control" unique_id=1649682032]
 layout_mode = 3
 anchors_preset = 15
 anchor_right = 1.0
@@ -22,10 +23,10 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("1_main")
 
-[node name="StageLayer" type="CanvasLayer" parent="."]
+[node name="StageLayer" type="CanvasLayer" parent="." unique_id=1154869082]
 layer = 0
 
-[node name="Stage" type="Control" parent="StageLayer"]
+[node name="Stage" type="Control" parent="StageLayer" unique_id=2111189612]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -36,10 +37,10 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("2_stage")
 
-[node name="UILayer" type="CanvasLayer" parent="."]
+[node name="UILayer" type="CanvasLayer" parent="." unique_id=1608953969]
 layer = 10
 
-[node name="DialogueBox" type="Control" parent="UILayer"]
+[node name="DialogueBox" type="Control" parent="UILayer" unique_id=443888305]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -50,7 +51,7 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("3_dialogue")
 
-[node name="Box" type="PanelContainer" parent="UILayer/DialogueBox"]
+[node name="Box" type="PanelContainer" parent="UILayer/DialogueBox" unique_id=1802052742]
 unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 12
@@ -65,28 +66,27 @@ grow_horizontal = 2
 grow_vertical = 0
 mouse_filter = 2
 
-[node name="VBox" type="VBoxContainer" parent="UILayer/DialogueBox/Box"]
+[node name="VBox" type="VBoxContainer" parent="UILayer/DialogueBox/Box" unique_id=1023441585]
 layout_mode = 2
 mouse_filter = 2
 theme_override_constants/separation = 14
 
-[node name="NameRow" type="HBoxContainer" parent="UILayer/DialogueBox/Box/VBox"]
+[node name="NameRow" type="HBoxContainer" parent="UILayer/DialogueBox/Box/VBox" unique_id=1260556391]
 layout_mode = 2
 mouse_filter = 2
 
-[node name="NamePlate" type="PanelContainer" parent="UILayer/DialogueBox/Box/VBox/NameRow"]
+[node name="NamePlate" type="PanelContainer" parent="UILayer/DialogueBox/Box/VBox/NameRow" unique_id=1770007100]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 0
 mouse_filter = 2
 
-[node name="NameLabel" type="Label" parent="UILayer/DialogueBox/Box/VBox/NameRow/NamePlate"]
+[node name="NameLabel" type="Label" parent="UILayer/DialogueBox/Box/VBox/NameRow/NamePlate" unique_id=335635441]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
 text = "角色名"
 
-[node name="TextLabel" type="RichTextLabel" parent="UILayer/DialogueBox/Box/VBox"]
+[node name="TextLabel" type="RichTextLabel" parent="UILayer/DialogueBox/Box/VBox" unique_id=356176289]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
@@ -94,7 +94,7 @@ mouse_filter = 2
 bbcode_enabled = true
 scroll_active = false
 
-[node name="Indicator" type="Control" parent="UILayer/DialogueBox"]
+[node name="Indicator" type="Control" parent="UILayer/DialogueBox" unique_id=864366718]
 unique_name_in_owner = true
 layout_mode = 1
 anchors_preset = 3
@@ -110,7 +110,7 @@ grow_horizontal = 0
 grow_vertical = 0
 mouse_filter = 2
 
-[node name="ChoicePanel" type="Control" parent="UILayer"]
+[node name="ChoicePanel" type="Control" parent="UILayer" unique_id=902443412]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -121,7 +121,7 @@ grow_vertical = 2
 mouse_filter = 2
 script = ExtResource("4_choice")
 
-[node name="Center" type="CenterContainer" parent="UILayer/ChoicePanel"]
+[node name="Center" type="CenterContainer" parent="UILayer/ChoicePanel" unique_id=2008547567]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -130,16 +130,15 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="ChoiceList" type="VBoxContainer" parent="UILayer/ChoicePanel/Center"]
+[node name="ChoiceList" type="VBoxContainer" parent="UILayer/ChoicePanel/Center" unique_id=2137969338]
 unique_name_in_owner = true
 layout_mode = 2
 mouse_filter = 2
 theme_override_constants/separation = 20
 alignment = 1
 
-[node name="HudBar" type="HBoxContainer" parent="UILayer"]
+[node name="HudBar" type="HBoxContainer" parent="UILayer" unique_id=1515916292]
 unique_name_in_owner = true
-layout_mode = 1
 anchors_preset = 1
 anchor_left = 1.0
 anchor_right = 1.0
@@ -151,42 +150,42 @@ grow_horizontal = 0
 theme_override_constants/separation = 12
 alignment = 2
 
-[node name="BtnAuto" type="Button" parent="UILayer/HudBar"]
+[node name="BtnAuto" type="Button" parent="UILayer/HudBar" unique_id=833634354]
 unique_name_in_owner = true
 layout_mode = 2
 text = "自动"
 
-[node name="BtnSkip" type="Button" parent="UILayer/HudBar"]
+[node name="BtnSkip" type="Button" parent="UILayer/HudBar" unique_id=1415496162]
 unique_name_in_owner = true
 layout_mode = 2
 text = "跳过"
 
-[node name="BtnBacklog" type="Button" parent="UILayer/HudBar"]
+[node name="BtnBacklog" type="Button" parent="UILayer/HudBar" unique_id=989674856]
 unique_name_in_owner = true
 layout_mode = 2
 text = "回看"
 
-[node name="BtnSave" type="Button" parent="UILayer/HudBar"]
+[node name="BtnSave" type="Button" parent="UILayer/HudBar" unique_id=618571449]
 unique_name_in_owner = true
 layout_mode = 2
 text = "存档"
 
-[node name="BtnLoad" type="Button" parent="UILayer/HudBar"]
+[node name="BtnLoad" type="Button" parent="UILayer/HudBar" unique_id=237881448]
 unique_name_in_owner = true
 layout_mode = 2
 text = "读档"
 
-[node name="BtnSettings" type="Button" parent="UILayer/HudBar"]
+[node name="BtnSettings" type="Button" parent="UILayer/HudBar" unique_id=1014126417]
 unique_name_in_owner = true
 layout_mode = 2
 text = "设置"
 
-[node name="BtnTitle" type="Button" parent="UILayer/HudBar"]
+[node name="BtnTitle" type="Button" parent="UILayer/HudBar" unique_id=1934078697]
 unique_name_in_owner = true
 layout_mode = 2
 text = "标题"
 
-[node name="TitleScreen" type="Control" parent="UILayer"]
+[node name="TitleScreen" type="Control" parent="UILayer" unique_id=294790668]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -196,7 +195,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("8_title")
 
-[node name="Dim" type="ColorRect" parent="UILayer/TitleScreen"]
+[node name="Dim" type="ColorRect" parent="UILayer/TitleScreen" unique_id=487020427]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -206,7 +205,7 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.055, 0.05, 0.098, 1)
 
-[node name="Center" type="CenterContainer" parent="UILayer/TitleScreen"]
+[node name="Center" type="Control" parent="UILayer/TitleScreen" unique_id=13467872]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -215,67 +214,74 @@ grow_horizontal = 2
 grow_vertical = 2
 mouse_filter = 2
 
-[node name="VBox" type="VBoxContainer" parent="UILayer/TitleScreen/Center"]
+[node name="VBox" type="VBoxContainer" parent="UILayer/TitleScreen/Center" unique_id=586231025]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+theme_override_constants/separation = 10
+
+[node name="TopSpacer" type="Control" parent="UILayer/TitleScreen/Center/VBox" unique_id=1967494542]
+custom_minimum_size = Vector2(0, 127)
 layout_mode = 2
 mouse_filter = 2
-theme_override_constants/separation = 18
-alignment = 1
 
-[node name="TitleLabel" type="Label" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="TitleLabel" type="Label" parent="UILayer/TitleScreen/Center/VBox" unique_id=1859711495]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
 text = "GALGAME SKELETON"
 horizontal_alignment = 1
 
-[node name="SubtitleLabel" type="Label" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="SubtitleLabel" type="Label" parent="UILayer/TitleScreen/Center/VBox" unique_id=37254166]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
 text = "Godot 4 视觉小说工程骨架"
 horizontal_alignment = 1
 
-[node name="Spacer" type="Control" parent="UILayer/TitleScreen/Center/VBox"]
-custom_minimum_size = Vector2(0, 40)
+[node name="Spacer" type="Control" parent="UILayer/TitleScreen/Center/VBox" unique_id=1732349406]
+custom_minimum_size = Vector2(0, 72)
 layout_mode = 2
 mouse_filter = 2
 
-[node name="StartButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="StartButton" type="Button" parent="UILayer/TitleScreen/Center/VBox" unique_id=228141103]
 unique_name_in_owner = true
 layout_mode = 2
 text = "开始游戏"
 
-[node name="ContinueButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="ContinueButton" type="Button" parent="UILayer/TitleScreen/Center/VBox" unique_id=766108422]
 unique_name_in_owner = true
 layout_mode = 2
 text = "继续游戏"
 
-[node name="LoadButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="LoadButton" type="Button" parent="UILayer/TitleScreen/Center/VBox" unique_id=758466424]
 unique_name_in_owner = true
 layout_mode = 2
 text = "读取存档"
 
-[node name="GalleryButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="GalleryButton" type="Button" parent="UILayer/TitleScreen/Center/VBox" unique_id=935528077]
 unique_name_in_owner = true
 layout_mode = 2
 text = "鉴 赏"
 
-[node name="RecordsButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="RecordsButton" type="Button" parent="UILayer/TitleScreen/Center/VBox" unique_id=1771158820]
 unique_name_in_owner = true
 layout_mode = 2
 text = "记 录"
 
-[node name="SettingsButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="SettingsButton" type="Button" parent="UILayer/TitleScreen/Center/VBox" unique_id=859630675]
 unique_name_in_owner = true
 layout_mode = 2
 text = "设置"
 
-[node name="QuitButton" type="Button" parent="UILayer/TitleScreen/Center/VBox"]
+[node name="QuitButton" type="Button" parent="UILayer/TitleScreen/Center/VBox" unique_id=1693151164]
 unique_name_in_owner = true
 layout_mode = 2
 text = "退出"
 
-[node name="BacklogPanel" type="Control" parent="UILayer"]
+[node name="BacklogPanel" type="Control" parent="UILayer" unique_id=1688168777]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -285,7 +291,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("5_backlog")
 
-[node name="Dim" type="ColorRect" parent="UILayer/BacklogPanel"]
+[node name="Dim" type="ColorRect" parent="UILayer/BacklogPanel" unique_id=1666131705]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -295,7 +301,7 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.031, 0.027, 0.055, 0.88)
 
-[node name="Panel" type="PanelContainer" parent="UILayer/BacklogPanel"]
+[node name="Panel" type="PanelContainer" parent="UILayer/BacklogPanel" unique_id=6452485]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -307,34 +313,33 @@ offset_bottom = -100.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBox" type="VBoxContainer" parent="UILayer/BacklogPanel/Panel"]
+[node name="VBox" type="VBoxContainer" parent="UILayer/BacklogPanel/Panel" unique_id=2062348479]
 layout_mode = 2
 theme_override_constants/separation = 18
 
-[node name="Header" type="Label" parent="UILayer/BacklogPanel/Panel/VBox"]
+[node name="Header" type="Label" parent="UILayer/BacklogPanel/Panel/VBox" unique_id=1645514914]
 layout_mode = 2
-mouse_filter = 2
 text = "回顾"
 
-[node name="BacklogScroll" type="ScrollContainer" parent="UILayer/BacklogPanel/Panel/VBox"]
+[node name="BacklogScroll" type="ScrollContainer" parent="UILayer/BacklogPanel/Panel/VBox" unique_id=593181227]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="Entries" type="VBoxContainer" parent="UILayer/BacklogPanel/Panel/VBox/BacklogScroll"]
+[node name="Entries" type="VBoxContainer" parent="UILayer/BacklogPanel/Panel/VBox/BacklogScroll" unique_id=803421520]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 16
 
-[node name="BacklogClose" type="Button" parent="UILayer/BacklogPanel/Panel/VBox"]
+[node name="BacklogClose" type="Button" parent="UILayer/BacklogPanel/Panel/VBox" unique_id=1767621968]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 4
 text = "关闭"
 
-[node name="SettingsPanel" type="Control" parent="UILayer"]
+[node name="SettingsPanel" type="Control" parent="UILayer" unique_id=2076073834]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -344,7 +349,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("6_settings")
 
-[node name="Dim" type="ColorRect" parent="UILayer/SettingsPanel"]
+[node name="Dim" type="ColorRect" parent="UILayer/SettingsPanel" unique_id=706444668]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -354,7 +359,7 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.031, 0.027, 0.055, 0.88)
 
-[node name="Panel" type="PanelContainer" parent="UILayer/SettingsPanel"]
+[node name="Panel" type="PanelContainer" parent="UILayer/SettingsPanel" unique_id=541355730]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -366,37 +371,36 @@ offset_bottom = -170.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBox" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel"]
+[node name="VBox" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel" unique_id=1626195462]
 layout_mode = 2
 theme_override_constants/separation = 22
 
-[node name="Header" type="Label" parent="UILayer/SettingsPanel/Panel/VBox"]
+[node name="Header" type="Label" parent="UILayer/SettingsPanel/Panel/VBox" unique_id=1698057918]
 layout_mode = 2
-mouse_filter = 2
 text = "设置"
 
-[node name="SettingsRows" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel/VBox"]
+[node name="SettingsRows" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel/VBox" unique_id=1796840647]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 20
 
-[node name="ButtonRow" type="HBoxContainer" parent="UILayer/SettingsPanel/Panel/VBox"]
+[node name="ButtonRow" type="HBoxContainer" parent="UILayer/SettingsPanel/Panel/VBox" unique_id=440432305]
 layout_mode = 2
 theme_override_constants/separation = 16
 alignment = 2
 
-[node name="SettingsReset" type="Button" parent="UILayer/SettingsPanel/Panel/VBox/ButtonRow"]
+[node name="SettingsReset" type="Button" parent="UILayer/SettingsPanel/Panel/VBox/ButtonRow" unique_id=1969067021]
 unique_name_in_owner = true
 layout_mode = 2
 text = "恢复默认"
 
-[node name="SettingsClose" type="Button" parent="UILayer/SettingsPanel/Panel/VBox/ButtonRow"]
+[node name="SettingsClose" type="Button" parent="UILayer/SettingsPanel/Panel/VBox/ButtonRow" unique_id=789185469]
 unique_name_in_owner = true
 layout_mode = 2
 text = "关闭"
 
-[node name="SaveLoadPanel" type="Control" parent="UILayer"]
+[node name="SaveLoadPanel" type="Control" parent="UILayer" unique_id=1053692441]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -406,7 +410,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("7_saveload")
 
-[node name="Dim" type="ColorRect" parent="UILayer/SaveLoadPanel"]
+[node name="Dim" type="ColorRect" parent="UILayer/SaveLoadPanel" unique_id=1497767391]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -416,7 +420,7 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.031, 0.027, 0.055, 0.88)
 
-[node name="Panel" type="PanelContainer" parent="UILayer/SaveLoadPanel"]
+[node name="Panel" type="PanelContainer" parent="UILayer/SaveLoadPanel" unique_id=1509695852]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -428,34 +432,33 @@ offset_bottom = -110.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBox" type="VBoxContainer" parent="UILayer/SaveLoadPanel/Panel"]
+[node name="VBox" type="VBoxContainer" parent="UILayer/SaveLoadPanel/Panel" unique_id=1352404111]
 layout_mode = 2
 theme_override_constants/separation = 20
 
-[node name="SaveLoadTitle" type="Label" parent="UILayer/SaveLoadPanel/Panel/VBox"]
+[node name="SaveLoadTitle" type="Label" parent="UILayer/SaveLoadPanel/Panel/VBox" unique_id=136742374]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
 text = "存档"
 
-[node name="SaveLoadScroll" type="ScrollContainer" parent="UILayer/SaveLoadPanel/Panel/VBox"]
+[node name="SaveLoadScroll" type="ScrollContainer" parent="UILayer/SaveLoadPanel/Panel/VBox" unique_id=1986511357]
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="SlotList" type="VBoxContainer" parent="UILayer/SaveLoadPanel/Panel/VBox/SaveLoadScroll"]
+[node name="SlotList" type="VBoxContainer" parent="UILayer/SaveLoadPanel/Panel/VBox/SaveLoadScroll" unique_id=652570077]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 14
 
-[node name="SaveLoadClose" type="Button" parent="UILayer/SaveLoadPanel/Panel/VBox"]
+[node name="SaveLoadClose" type="Button" parent="UILayer/SaveLoadPanel/Panel/VBox" unique_id=1397443248]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 4
 text = "关闭"
 
-[node name="GalleryPanel" type="Control" parent="UILayer"]
+[node name="GalleryPanel" type="Control" parent="UILayer" unique_id=1731623640]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -465,7 +468,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("9_gallery")
 
-[node name="Dim" type="ColorRect" parent="UILayer/GalleryPanel"]
+[node name="Dim" type="ColorRect" parent="UILayer/GalleryPanel" unique_id=1039188554]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -475,7 +478,7 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.031, 0.027, 0.055, 0.94)
 
-[node name="Panel" type="PanelContainer" parent="UILayer/GalleryPanel"]
+[node name="Panel" type="PanelContainer" parent="UILayer/GalleryPanel" unique_id=1201876620]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -487,50 +490,48 @@ offset_bottom = -60.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBox" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel"]
+[node name="VBox" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel" unique_id=1479455256]
 layout_mode = 2
 theme_override_constants/separation = 18
 
-[node name="Header" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox"]
+[node name="Header" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox" unique_id=1855531850]
 layout_mode = 2
 theme_override_constants/separation = 14
 
-[node name="GalleryTitle" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+[node name="GalleryTitle" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/Header" unique_id=33133020]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
 text = "鉴 赏"
 
-[node name="GalleryProgress" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+[node name="GalleryProgress" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/Header" unique_id=938664777]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-mouse_filter = 2
-vertical_alignment = 1
 text = "收集进度"
+vertical_alignment = 1
 
-[node name="TabCg" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+[node name="TabCg" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header" unique_id=1120379499]
 unique_name_in_owner = true
 layout_mode = 2
 text = "CG 鉴赏"
 
-[node name="TabMusic" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+[node name="TabMusic" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header" unique_id=675194701]
 unique_name_in_owner = true
 layout_mode = 2
 text = "音乐鉴赏"
 
-[node name="GalleryClose" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header"]
+[node name="GalleryClose" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/Header" unique_id=420444341]
 unique_name_in_owner = true
 layout_mode = 2
 text = "关闭"
 
-[node name="CgScroll" type="ScrollContainer" parent="UILayer/GalleryPanel/Panel/VBox"]
+[node name="CgScroll" type="ScrollContainer" parent="UILayer/GalleryPanel/Panel/VBox" unique_id=2122717397]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="CgGrid" type="GridContainer" parent="UILayer/GalleryPanel/Panel/VBox/CgScroll"]
+[node name="CgGrid" type="GridContainer" parent="UILayer/GalleryPanel/Panel/VBox/CgScroll" unique_id=38823305]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
@@ -538,90 +539,86 @@ theme_override_constants/h_separation = 22
 theme_override_constants/v_separation = 22
 columns = 3
 
-[node name="MusicRoot" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox"]
+[node name="MusicRoot" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox" unique_id=91099932]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 14
 script = ExtResource("10_music")
 
-[node name="Body" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot"]
+[node name="Body" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot" unique_id=1551125804]
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 30
 
-[node name="Left" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body"]
+[node name="Left" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body" unique_id=505175162]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 12
 
-[node name="ListHeader" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left"]
+[node name="ListHeader" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left" unique_id=543855096]
 layout_mode = 2
-mouse_filter = 2
 text = "曲目"
 
-[node name="TrackScroll" type="ScrollContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left"]
+[node name="TrackScroll" type="ScrollContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left" unique_id=719696915]
 layout_mode = 2
 size_flags_vertical = 3
 horizontal_scroll_mode = 0
 
-[node name="TrackList" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left/TrackScroll"]
+[node name="TrackList" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Left/TrackScroll" unique_id=1258118433]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 8
 
-[node name="Right" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body"]
+[node name="Right" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body" unique_id=1127647401]
 custom_minimum_size = Vector2(520, 0)
 layout_mode = 2
 theme_override_constants/separation = 16
 
-[node name="VisualizerHost" type="Control" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+[node name="VisualizerHost" type="Control" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=1768981519]
 unique_name_in_owner = true
 custom_minimum_size = Vector2(0, 230)
 layout_mode = 2
 mouse_filter = 2
 
-[node name="NowPlaying" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+[node name="NowPlaying" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=228669489]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
 horizontal_alignment = 1
 
-[node name="TrackArtist" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+[node name="TrackArtist" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=1830400557]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
 horizontal_alignment = 1
 
-[node name="Controls" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+[node name="Controls" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=1804638003]
 layout_mode = 2
 theme_override_constants/separation = 12
 alignment = 1
 
-[node name="MusicPrev" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls"]
+[node name="MusicPrev" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls" unique_id=2053153981]
 unique_name_in_owner = true
 layout_mode = 2
 text = "上一首"
 
-[node name="MusicPlay" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls"]
+[node name="MusicPlay" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls" unique_id=2136027008]
 unique_name_in_owner = true
 layout_mode = 2
 text = "播放"
 
-[node name="MusicNext" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls"]
+[node name="MusicNext" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls" unique_id=1862712238]
 unique_name_in_owner = true
 layout_mode = 2
 text = "下一首"
 
-[node name="MusicTime" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right"]
+[node name="MusicTime" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=19928226]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
-horizontal_alignment = 1
 text = "未在播放"
+horizontal_alignment = 1
 
-[node name="CgViewer" type="Control" parent="UILayer"]
+[node name="CgViewer" type="Control" parent="UILayer" unique_id=331624997]
 unique_name_in_owner = true
 layout_mode = 3
 anchors_preset = 15
@@ -631,7 +628,7 @@ grow_horizontal = 2
 grow_vertical = 2
 script = ExtResource("11_cgviewer")
 
-[node name="Dim" type="ColorRect" parent="UILayer/CgViewer"]
+[node name="Dim" type="ColorRect" parent="UILayer/CgViewer" unique_id=1994535524]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -641,7 +638,7 @@ grow_vertical = 2
 mouse_filter = 2
 color = Color(0.02, 0.018, 0.035, 0.97)
 
-[node name="Panel" type="PanelContainer" parent="UILayer/CgViewer"]
+[node name="Panel" type="PanelContainer" parent="UILayer/CgViewer" unique_id=673260729]
 layout_mode = 1
 anchors_preset = 15
 anchor_right = 1.0
@@ -653,11 +650,11 @@ offset_bottom = -50.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBox" type="VBoxContainer" parent="UILayer/CgViewer/Panel"]
+[node name="VBox" type="VBoxContainer" parent="UILayer/CgViewer/Panel" unique_id=729938118]
 layout_mode = 2
 theme_override_constants/separation = 18
 
-[node name="CgImage" type="TextureRect" parent="UILayer/CgViewer/Panel/VBox"]
+[node name="CgImage" type="TextureRect" parent="UILayer/CgViewer/Panel/VBox" unique_id=1447293927]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
@@ -665,37 +662,48 @@ mouse_filter = 2
 expand_mode = 1
 stretch_mode = 5
 
-[node name="Footer" type="HBoxContainer" parent="UILayer/CgViewer/Panel/VBox"]
+[node name="Footer" type="HBoxContainer" parent="UILayer/CgViewer/Panel/VBox" unique_id=545369170]
 layout_mode = 2
 theme_override_constants/separation = 18
 
-[node name="Info" type="VBoxContainer" parent="UILayer/CgViewer/Panel/VBox/Footer"]
+[node name="Info" type="VBoxContainer" parent="UILayer/CgViewer/Panel/VBox/Footer" unique_id=879597823]
 layout_mode = 2
 size_flags_horizontal = 3
 theme_override_constants/separation = 4
 
-[node name="CgViewerTitle" type="Label" parent="UILayer/CgViewer/Panel/VBox/Footer/Info"]
+[node name="CgViewerTitle" type="Label" parent="UILayer/CgViewer/Panel/VBox/Footer/Info" unique_id=982292563]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
 text = "CG"
 
-[node name="CgViewerHint" type="Label" parent="UILayer/CgViewer/Panel/VBox/Footer/Info"]
+[node name="CgViewerHint" type="Label" parent="UILayer/CgViewer/Panel/VBox/Footer/Info" unique_id=2022163014]
 unique_name_in_owner = true
 layout_mode = 2
-mouse_filter = 2
-text = ""
 
-[node name="CgReplay" type="Button" parent="UILayer/CgViewer/Panel/VBox/Footer"]
+[node name="CgReplay" type="Button" parent="UILayer/CgViewer/Panel/VBox/Footer" unique_id=213855375]
 unique_name_in_owner = true
 layout_mode = 2
 text = "重播剧情"
 
-[node name="CgViewerClose" type="Button" parent="UILayer/CgViewer/Panel/VBox/Footer"]
+[node name="CgViewerClose" type="Button" parent="UILayer/CgViewer/Panel/VBox/Footer" unique_id=2009183547]
 unique_name_in_owner = true
 layout_mode = 2
 text = "关闭"
 
-[node name="MinigameLayer" type="CanvasLayer" parent="."]
+[node name="MinigameLayer" type="CanvasLayer" parent="." unique_id=1240480768]
 unique_name_in_owner = true
 layer = 20
+
+[node name="FxLayer" type="CanvasLayer" parent="." unique_id=1216280959]
+layer = 30
+
+[node name="ScreenFx" type="ColorRect" parent="FxLayer" unique_id=1541746044]
+unique_name_in_owner = true
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(1, 1, 1, 0)
+script = ExtResource("12_screenfx")

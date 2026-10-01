@@ -54,7 +54,7 @@ narr ——抖了抖。
 zoom bob 1.0 duration=0.35 ease=out_cubic
 narr ——退回去。
 
-move bob left duration=1.0 ease=in_cubic
+move bob off_left duration=1.0 ease=in_cubic
 narr ——带着加速度溜走了。（in_cubic 是越走越快，不是匀速）
 
 hide bob fade=0.5

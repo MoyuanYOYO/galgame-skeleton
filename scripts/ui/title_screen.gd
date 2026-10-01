@@ -26,13 +26,53 @@ signal records_requested()
 @onready var _quit_button: Button = %QuitButton
 
 
+## 标题画面底板：照片 + 暖色纱罩（对齐选型页 mockup 的「樱花照片上浮着菜单」）。
+## bg 没配 / 文件缺失时回退成不透明的 BG_DEEP 纯色底 ——
+## 舞台是空的，半透明纱罩会露出窗口底色，所以回退分支必须压满不透明。
+func _build_backdrop() -> void:
+	var cfg := UiTheme.section("title")
+	var dim := $Dim as ColorRect
+	var path := String(cfg.get("bg", "")).strip_edges()
+	if path.is_empty() or not ResourceLoader.exists(path):
+		dim.color = Color(UiTheme.BG_DEEP.r, UiTheme.BG_DEEP.g,
+			UiTheme.BG_DEEP.b, 1.0)
+		return
+	var bg := TextureRect.new()
+	bg.name = "Backdrop"
+	bg.texture = load(path) as Texture2D
+	bg.set_anchors_preset(Control.PRESET_FULL_RECT)
+	bg.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	bg.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
+	move_child(bg, 0)
+	var scrim := Color.from_string(String(cfg.get("scrim", "#2a1f26")),
+		Color(UiTheme.BG_DEEP.r, UiTheme.BG_DEEP.g, UiTheme.BG_DEEP.b, 1.0))
+	scrim.a = float(cfg.get("scrim_alpha", 1.0))
+	dim.color = scrim
+
+
 func _ready() -> void:
-	UiTheme.apply_label(_title_label, UiTheme.TEXT, 78)
-	UiTheme.apply_label(_subtitle_label, UiTheme.TEXT_DIM, 24)
+	_build_backdrop()
+	# 标题文字直接坐在深色底板上，不跟着 palette.text 走 ——
+	# 浅色主题里 text 是深墨色，放在深色标题底板上会看不清。
+	# 颜色单独给键（title_text / title_text_dim），换主题不用改代码。
+	_title_label.add_theme_color_override("font_shadow_color",
+		Color(0, 0, 0, 0.45))
+	_title_label.add_theme_constant_override("shadow_offset_y", 4)
+	_title_label.add_theme_constant_override("shadow_outline_size", 2)
+	UiTheme.apply_label(_title_label, UiTheme.color("title_text", UiTheme.TEXT), 78)
+	UiTheme.apply_label(_subtitle_label,
+		UiTheme.color("title_text_dim", UiTheme.TEXT_DIM), 24)
+	# 「开始游戏」是主按钮（玫红），其余是白芯片 —— 与选型页 mockup 一致
 	for button in [_start_button, _continue_button, _load_button,
 			_gallery_button, _records_button, _settings_button, _quit_button]:
 		var btn := button as Button
-		UiTheme.apply_button(btn, "title")
+		var preset := "title_sub" if button != _start_button else "title"
+		UiTheme.apply_button(btn, preset)
+		# VBox 子节点默认横向 FILL：不收窄的话按钮会被拉成全屏宽的横条，
+		# 预设里的 width 只是「最小宽度」。收到预设宽并水平居中（mockup 的窄菜单）。
+		btn.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	_start_button.pressed.connect(func() -> void: start_requested.emit())
 	_continue_button.pressed.connect(func() -> void: continue_requested.emit())
 	_load_button.pressed.connect(func() -> void: load_requested.emit())

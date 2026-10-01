@@ -139,6 +139,7 @@ func _make_slider_row(spec: Dictionary) -> HBoxContainer:
 	slider.custom_minimum_size = Vector2(420.0, 34.0)
 	slider.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	slider.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	UiTheme.apply_slider(slider)
 	row.add_child(slider)
 
 	var value_label := Label.new()

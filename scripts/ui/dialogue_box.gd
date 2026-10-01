@@ -31,25 +31,22 @@ var _timeline := PackedFloat64Array()
 func _ready() -> void:
 	set_process(false)
 
-	# 尺寸、内边距、位置全部来自 data/ui/ui_theme.json 的 dialogue 段
-	var radius := int(UiTheme.dialogue_value("radius", 18))
-	var border := int(UiTheme.dialogue_value("border_width", 1))
-	var pad_h := int(UiTheme.dialogue_value("pad_h", 46))
-	var pad_v := int(UiTheme.dialogue_value("pad_v", 30))
-
+	# 尺寸、位置来自 data/ui/ui_theme.json 的 dialogue 段。
+	# 样式统一走 UiTheme：配了九宫格贴图就用贴图，没配就回退到程序化圆角矩形。
+	# 这里不关心是哪一种，所以 radius / border_width 不再需要单独取。
 	_box.offset_left = UiTheme.dialogue_value("offset_left", 130.0)
 	_box.offset_top = UiTheme.dialogue_value("offset_top", -320.0)
 	_box.offset_right = UiTheme.dialogue_value("offset_right", -130.0)
 	_box.offset_bottom = UiTheme.dialogue_value("offset_bottom", -70.0)
 
-	_box.add_theme_stylebox_override("panel", UiTheme.stylebox(
-		Color(UiTheme.BG_DEEP.r, UiTheme.BG_DEEP.g, UiTheme.BG_DEEP.b, 0.97),
-		radius, UiTheme.BORDER, border, pad_h, pad_v))
-	_name_plate.add_theme_stylebox_override("panel", UiTheme.stylebox(
-		Color(UiTheme.NAME_PLATE.r, UiTheme.NAME_PLATE.g, UiTheme.NAME_PLATE.b, 0.98),
-		10, UiTheme.BORDER, 1,
-		int(UiTheme.dialogue_value("name_pad_h", 24)),
-		int(UiTheme.dialogue_value("name_pad_v", 6))))
+	# 编辑器里手动 override 过的 StyleBox 优先（同 UiTheme.apply_panel 的约定），
+	# 手改贴图 / 样式不会被运行时代码盖掉。
+	if not _box.has_theme_stylebox_override("panel"):
+		_box.add_theme_stylebox_override("panel", UiTheme.dialogue_stylebox(
+			Color(UiTheme.BG_DEEP.r, UiTheme.BG_DEEP.g, UiTheme.BG_DEEP.b, 0.97)))
+	if not _name_plate.has_theme_stylebox_override("panel"):
+		_name_plate.add_theme_stylebox_override("panel", UiTheme.nameplate_stylebox(
+			Color(UiTheme.NAME_PLATE.r, UiTheme.NAME_PLATE.g, UiTheme.NAME_PLATE.b, 0.98)))
 	UiTheme.apply_label(_name_label, UiTheme.SPEAKER,
 		int(UiTheme.number("speaker", 26)), "dialogue")
 	UiTheme.apply_rich_text(_text_label, UiTheme.TEXT,

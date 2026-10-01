@@ -216,6 +216,15 @@ static func get_char(char_id: String, expr: String) -> Texture2D:
 	if real_expr != null:
 		return real_expr
 
+	# 缺这一层时，剧本用了没素材的表情（如 alice@angry）会直接跳到
+	# 程序化占位立绘 —— 有真素材的角色突然换成火柴人，观感是「旧角色
+	# 没删干净蹦出来」。先回退到该角色的 normal 表情才是对的：
+	# 表情没跟上，至少人还是那个人。
+	if expr != "normal":
+		var fallback_expr := _load_real(SPRITE_DIR + char_id + "/", "normal")
+		if fallback_expr != null:
+			return fallback_expr
+
 	var key := "%s/%s" % [char_id, expr]
 	if _char_cache.has(key):
 		return _char_cache[key] as Texture2D

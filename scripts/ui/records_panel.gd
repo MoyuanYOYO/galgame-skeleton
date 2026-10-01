@@ -262,7 +262,8 @@ func _make_ending_section() -> Control:
 
 		var card := PanelContainer.new()
 		card.custom_minimum_size = ENDING_CARD
-		UiTheme.apply_panel(card, "default")
+		# 卡片用小内边距预设，别用 default（那是给大面板留的边距）
+		UiTheme.apply_panel(card, "card")
 
 		var text := VBoxContainer.new()
 		text.add_theme_constant_override("separation", 6)

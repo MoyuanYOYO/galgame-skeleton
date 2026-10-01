@@ -168,6 +168,8 @@ func _execute(text: String) -> void:
 			_cmd_rollback(args)
 		"read":
 			_cmd_read(args)
+		"fx":
+			_cmd_fx(args)
 		"clear":
 			_output.clear()
 		_:
@@ -189,6 +191,7 @@ func _print_help() -> void:
 		["assets", "列出缺哪些素材"],
 		["reload", "热重载当前剧本（从当前标签重开）"],
 		["rollback [n]", "回退 n 句（默认 1）；负数表示前进"],
+		["fx <种类> [强度] [时长]", "全屏特效：%s" % ScreenFxSpec.list_text()],
 		["read clear", "清空已读记录"],
 		["clear", "清屏"],
 	]
@@ -367,6 +370,35 @@ func _cmd_reload() -> void:
 
 ## 回退 / 前进若干句。负数表示前进（撤销回退）。
 ## 「回到刚才那句重看一下演出」不用再重启从头点。
+## fx <种类> [强度] [时长]
+##
+## 调全屏特效手感用。默认时长 0 表示「持续」—— 写剧本时想看长时间扭曲
+## 是什么样，不用改剧本重开，敲一行就行；再敲 `fx none` 关掉。
+func _cmd_fx(args: PackedStringArray) -> void:
+	var fx: ScreenFx = _main.get("screen_fx") as ScreenFx
+	if fx == null:
+		_print_line("[color=#E24B4A]拿不到特效层[/color]")
+		return
+	if args.is_empty():
+		_print_line("当前特效：%s　强度 %.2f　%s"
+			% [fx.get_kind(), fx.get_strength(), "生效中" if fx.is_active() else "未生效"])
+		_print_line("[color=#888780]可用：%s[/color]" % ScreenFxSpec.list_text())
+		return
+	var kind := String(args[0])
+	var strength := 1.5
+	var duration := 0.0
+	if args.size() >= 2:
+		strength = float(String(args[1]))
+	if args.size() >= 3:
+		duration = float(String(args[2]))
+	if not fx.play(kind, strength, duration):
+		_print_line("[color=#E24B4A]未知特效：%s[/color]" % kind)
+		return
+	_print_line("[color=#5DCAA5]特效 %s　强度 %.2f　%s[/color]"
+		% [kind, strength, "持续（fx none 关闭）" if duration <= 0.0
+			else "%.2f 秒" % duration])
+
+
 func _cmd_rollback(args: PackedStringArray) -> void:
 	var steps := 1
 	if not args.is_empty():

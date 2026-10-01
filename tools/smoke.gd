@@ -210,6 +210,7 @@ func _check_ui_theme() -> void:
 	_ok(preset_count >= 5, "按钮预设数量 = %d" % preset_count)
 
 	# --- 按钮尺寸来自预设 ---
+	# v5.2 起标题菜单收窄到 340（对齐选型页 mockup：17.7cqw × 19.2 ≈ 340）
 	_ok(UiTheme.button_min_size("title") == Vector2(340.0, 68.0),
 		"title 预设尺寸 = %s" % UiTheme.button_min_size("title"))
 	_ok(UiTheme.button_min_size("choice") == Vector2(760.0, 68.0),
@@ -247,6 +248,11 @@ func _check_ui_theme() -> void:
 	if ResourceLoader.exists(texture_path):
 		title_preset["texture"] = texture_path
 		title_preset["texture_margin"] = 14
+		# 必须先把独立的四态贴图清掉，才能确定走的是「只配一张贴图」这条分支。
+		# 不能假设真实配置里没有 texture_hover —— 那等于把测试绑死在某个配置状态上，
+		# 一旦给预设补了四态贴图，这里就会误报。
+		for st in ["hover", "pressed", "disabled"]:
+			title_preset["texture_" + st] = ""
 		var textured := Button.new()
 		UiTheme.apply_button(textured, "title")
 		var sb := textured.get_theme_stylebox("normal")
@@ -279,6 +285,28 @@ func _check_ui_theme() -> void:
 	_ok(tinted.get_theme_color("font_color") == expected_font,
 		"文字颜色取自预设（%s）" % tinted.get_theme_color("font_color"))
 	tinted.free()
+
+	# --- focus 态不能漏 Godot 默认样式 ---
+	# 不 override 时 Godot 默认给黑色方框边框 + 白色文字：
+	# 选项面板第一个按钮会 grab_focus，症状是「按下出黑框 + 文字变白看不清」。
+	var focus_probe := Button.new()
+	UiTheme.apply_button(focus_probe, "default")
+	var fsb := focus_probe.get_theme_stylebox("focus")
+	_ok(fsb is StyleBoxFlat and is_equal_approx((fsb as StyleBoxFlat).bg_color.a, 0.0),
+		"focus 样式是透明底描边（不是默认黑框）")
+	_ok(focus_probe.get_theme_color("font_focus_color")
+		== focus_probe.get_theme_color("font_color"),
+		"focus 态文字颜色与普通态一致（不再默认白字）")
+	focus_probe.free()
+
+	# 编辑器手改优先（normal 已被 override）的按钮也要拿到 focus 修复
+	# —— 这条断言守的就是「提前 return 跳过 focus 处理」的回归
+	var manual_btn := Button.new()
+	manual_btn.add_theme_stylebox_override("normal", StyleBoxFlat.new())
+	UiTheme.apply_button(manual_btn, "default")
+	_ok(manual_btn.has_theme_stylebox_override("focus"),
+		"编辑器手改过的按钮同样没有默认黑框")
+	manual_btn.free()
 
 	# --- 按钮音效 ---
 	var audio := UiTheme.section("audio")
@@ -339,9 +367,11 @@ func _check_ui_theme() -> void:
 	_ok(UiTheme.font("不存在的键") == null, "未定义的字体键安全返回 null")
 
 	# --- 对话框位置来自配置 ---
-	_ok(UiTheme.dialogue_value("offset_left", -1.0) == 130.0,
+	_ok(UiTheme.dialogue_value("offset_left", -1.0) == 132.0,
 		"对话框左边距 = %d" % int(UiTheme.dialogue_value("offset_left", -1.0)))
-	_ok(UiTheme.dialogue_value("offset_top", 0.0) == -320.0,
+	# v5.2 起改为 -382：按选型页 mockup 换算（高 13.4cqw≈257 + 上下投影边 24×2
+	# + 底距 77）。对话框整体变高、底边上抬到 77px，比例与 mockup 一致。
+	_ok(UiTheme.dialogue_value("offset_top", 0.0) == -382.0,
 		"对话框高度偏移 = %d" % int(UiTheme.dialogue_value("offset_top", 0.0)))
 
 	probe.free()
@@ -455,6 +485,7 @@ shake alice strength=15 times=6 duration=0.5
 move alice right duration=1.2 ease=in_cubic
 screen_shake strength=25 times=5 duration=0.6
 screen_flash color=#ff0000 duration=0.4
+screen_fx swirl strength=1.6 duration=2.0
 """, "motion_test.gvs")
 	_ok(bool(result["ok"]), "动效剧本解析无错误")
 	if not bool(result["ok"]):
@@ -488,6 +519,24 @@ screen_flash color=#ff0000 duration=0.4
 	if by_op.has("screen_flash"):
 		_ok(String((by_op["screen_flash"] as Dictionary)["color"]) == "#ff0000",
 			"screen_flash color 参数生效")
+
+	_ok(by_op.has("screen_fx"), "screen_fx 已解析")
+	if by_op.has("screen_fx"):
+		var fx: Dictionary = by_op["screen_fx"]
+		_ok(String(fx["kind"]) == "swirl", "screen_fx 种类生效")
+		_ok(is_equal_approx(float(fx["strength"]), 1.6), "screen_fx strength 参数生效")
+		_ok(is_equal_approx(float(fx["duration"]), 2.0), "screen_fx duration 参数生效")
+
+	# 种类名写错必须是**解析期错误**，不能静默降级 —— 降级的话表现就是
+	# 「剧本写了、演出不出来」，只有控制台一行 warning，正是最难查的那类 bug。
+	var bad_fx := GvsParser.parse("label start\nscreen_fx glich\n", "bad_fx.gvs")
+	_ok(not bool(bad_fx["ok"]), "screen_fx 种类拼错会被解析器拦下")
+	# 缺种类也一样
+	var no_kind := GvsParser.parse("label start\nscreen_fx\n", "no_kind.gvs")
+	_ok(not bool(no_kind["ok"]), "screen_fx 缺种类会被解析器拦下")
+	# 关闭写法（none）是合法的
+	var off_fx := GvsParser.parse("label start\nscreen_fx none\n", "off_fx.gvs")
+	_ok(bool(off_fx["ok"]), "screen_fx none 合法（用来关闭）")
 
 	# move 的 ease 是新增的，缺省应为 out_cubic（不是线性）
 	_ok(by_op.has("move"), "move 已解析")
@@ -861,15 +910,35 @@ ending dup_end "结局乙"
 	_ok(assets.has("char"), "清单里有立绘")
 	_ok((assets.get("bg", {}) as Dictionary).has("classroom"), "背景清单含 classroom")
 
-	# 骨架工程里所有素材都还没有真实文件，这是预期行为 ——
-	# 这里断言的是「查得到、返回 false」而不是「有文件」
-	_ok(not ScriptAudit.has_real_asset("bg", "classroom"), "classroom 背景还没有真实文件（用占位图）")
+	# 素材是否存在会随工程状态变（骨架期 assets/ 是空的，带上素材后就有文件），
+	# 所以这里**不能**断言「classroom 一定缺文件」—— 那等于把测试绑死在某个目录状态上：
+	# 一放真素材就红，而这种红是测试的错，不是工程的错。
+	# 改成断言与状态无关的不变量：探针 id 必然查不到。
+	_ok(not ScriptAudit.has_real_asset("bg", "__probe_missing__"), "不存在的 id 返回 false（用占位图）")
 	_ok(not ScriptAudit.has_real_asset("bg", ""), "空 id 返回 false 而不是崩")
 	_ok(not ScriptAudit.has_real_asset("不存在的类型", "x"), "未知素材类型返回 false")
 
+	# 缺失清单必须与实际文件严格互补：有文件的 id 不许出现在清单里，
+	# 没文件的 id 必须出现。空目录和满目录下都成立，只有真不一致时才会失败。
 	var missing := ScriptAudit.missing_assets()
-	_ok(missing.has("bg"), "缺失清单里列出了背景")
-	_ok(not (missing.get("bg", []) as Array).is_empty(), "classroom 在缺失清单里")
+	var consistent := true
+	for kind in assets.keys():
+		var table: Dictionary = assets[kind]
+		for id in table.keys():
+			if bool(table[id]) == (missing.get(kind, []) as Array).has(id):
+				consistent = false
+	_ok(consistent, "缺失清单与实际文件严格互补（共 %d 类素材，其中 %d 类有缺失）"
+		% [assets.size(), missing.size()])
+
+	# --- 缺素材的表情回退到该角色的 normal 表情 ---
+	# 没有这层回退时，剧本用了没素材的表情（alice@angry）会直接跳到
+	# 程序化占位立绘 —— 有真素材的角色突然换成火柴人。
+	# 断言与素材状态解耦：angry 素材真补上时回退不触发，跳过即可。
+	if ResourceLoader.exists("res://assets/sprites/alice/normal.png") \
+			and not ResourceLoader.exists("res://assets/sprites/alice/angry.png"):
+		_ok(PlaceholderAssets.get_char("alice", "angry")
+			== PlaceholderAssets.get_char("alice", "normal"),
+			"缺 angry 素材时回退 alice 的 normal 表情（不跳程序占位）")
 
 	# --- 解析器保留了跳转标签名（静态校验靠它）---
 	var parsed := GvsParser.parse("label start\njump somewhere\nlabel somewhere\nnarr 到了", "t.gvs")
@@ -1220,6 +1289,21 @@ func _check_scenes() -> void:
 	await _wait(0.7)
 	_ok(not stage_node.is_char_visible("alice"), "slide_right 滑出后隐藏")
 
+	# --- 离场槽：move 到 off_left / off_right 必须整体出画 ---
+	# 只有 left/center/right 时，「溜走」演出只能移到左侧角色身边
+	# （和女主叠在一起），出不去屏幕。
+	stage_node.show_char("alice", "normal", "left", "none", 0.0)
+	stage_node.move_char("alice", "off_left", 0.0)
+	var off_l := stage_node.get_char_position("alice")
+	_ok(off_l.x + Stage.CHAR_WIDTH <= 0.0,
+		"off_left 立绘整体在屏幕左侧外（x=%.0f + 宽 %.0f）"
+			% [off_l.x, Stage.CHAR_WIDTH])
+	stage_node.move_char("alice", "off_right", 0.0)
+	var off_r := stage_node.get_char_position("alice")
+	_ok(off_r.x >= Stage.DESIGN.x,
+		"off_right 立绘整体在屏幕右侧外（x=%.0f ≥ 画布 %.0f）"
+			% [off_r.x, Stage.DESIGN.x])
+
 	# --- 天气 ---
 	_ok(stage_node.get_weather().is_empty(), "初始没有天气")
 	stage_node.set_weather("snow", 1.0)
@@ -1361,6 +1445,8 @@ func _check_scenes() -> void:
 	_check_read_dim(main_node)
 	_check_marker_stripping(main_node)
 	_check_i18n(main_node)
+	# 放最后：它会动到 runner（回滚快照还原）并把舞台 clear 掉
+	await _check_screen_fx(main_node)
 
 	main_node.queue_free()
 
@@ -1829,6 +1915,16 @@ func _check_auto_advance(main_node: Node, runner: ScriptRunner) -> void:
 
 	main_node.call("_toggle_auto")
 	_ok(bool(main_node.get("_auto_mode")), "点击「自动」后进入自动播放状态")
+	# 开启态反馈是「变色锁定」而不是「（开）」后缀：normal 样式必须换成
+	# pressed 贴图，且文字保持「自动」（走 i18n）
+	var auto_btn: Button = main_node.get("_btn_auto")
+	_ok(String(auto_btn.text) == "自动",
+		"开启后按钮文字仍是「自动」（不显示后缀）")
+	var hud_p: Dictionary = UiTheme.preset("hud")
+	var pressed_sb := UiTheme._button_stylebox(hud_p, "pressed")
+	_ok(auto_btn.get_theme_stylebox("normal") != null
+		and auto_btn.get_theme_stylebox("normal").texture == pressed_sb.texture,
+		"开启后 normal 样式换用 pressed 贴图（变色锁定）")
 	await _wait(1.5)
 	var advanced := _say_count - before
 
@@ -1892,6 +1988,7 @@ const OP_SAMPLES: Dictionary = {
 	"shake": {"line": "shake alice", "expect": "stage"},
 	"screen_shake": {"line": "screen_shake", "expect": "stage"},
 	"screen_flash": {"line": "screen_flash", "expect": "stage"},
+	"screen_fx": {"line": "screen_fx glitch", "expect": "stage"},
 	"bg_motion": {"line": "bg_motion scale=1.1", "expect": "stage"},
 	"weather": {"line": "weather rain", "expect": "stage"},
 	"cg": {"line": "cg cg_classroom", "expect": "stage"},
@@ -2646,10 +2743,14 @@ func _collect_rich_text(root: Node) -> PackedStringArray:
 # ---------------------------------------------------------------------------
 
 ## core / autoload 里不该出现的表现层类型（面板 / 演出层 / 调试台）
+##
+## 注意 ScreenFx 与 ScreenFxSpec 是两回事：前者是挂在场景里的表现层节点，
+## 后者是放在 core 的纯数据（种类表），两边都要用，所以只禁前者。
+## _mentions() 用的是词边界，ScreenFxSpec 不会被 ScreenFx 误伤。
 const PRESENTATION_TYPES: PackedStringArray = [
 	"DialogueBox", "BacklogPanel", "ChoicePanel", "GalleryPanel", "CgViewer",
 	"RecordsPanel", "SettingsPanel", "SaveLoadPanel", "MusicPanel", "TitleScreen",
-	"LockIcon", "RecordDisc", "SpectrumBars", "DebugConsole", "Stage",
+	"LockIcon", "RecordDisc", "SpectrumBars", "DebugConsole", "Stage", "ScreenFx",
 ]
 ## 唯一允许反过来抓编排层的表现层文件：调试台本来就是个「什么都能碰」的工具，
 ## 拿 main 引用来换实现简单，是作者在它文件头注明的取舍。
@@ -2840,3 +2941,125 @@ func _check_script_paths() -> void:
 	# 换语言时 _current_file 记的是逻辑路径，所以读档不会因为语言变化而找不到剧本
 	ConfigManager.set_value("language", original, false)
 	_ok(String(ConfigManager.get_value("language", "")) == original, "收尾还原语言设置")
+
+
+# ---------------------------------------------------------------------------
+# 29. 全屏特效
+#
+# 这一节守的是「错了也看不出来」的几条：
+#   · 层必须排在 UI 之上 —— 排在下面时特效只糊背景，对话框纹丝不动地浮在
+#     扭曲的画面外面，像贴纸；
+#   · BackBufferCopy 必须是紧挨着的前一个兄弟 —— 位置错了就读不到已经画好的
+#     画面，结果不是「没效果」就是整屏变黑；
+#   · 未知种类必须当场拦下 —— 静默忽略的表现是「剧本写了、演出不出来」。
+#
+# 渲染结果本身在 headless 下看不见（视口只有 64×64、也没有真的 back buffer），
+# 所以这里断言的是逻辑上观察得到的那部分，画面由 tools/capture.tscn 截图确认。
+# ---------------------------------------------------------------------------
+
+func _check_screen_fx(main_node: Node) -> void:
+	print("[smoke] 29. 全屏特效")
+
+	# 先回到一个干净的「游戏进行中」状态：标题界面和面板都会把特效压住
+	# （见 _refresh_fx_suspension），不先清干净的话下面的断言全都不成立。
+	# 顺带让 runner 载入真实剧本 —— 回滚那一段要能还原 runner，指针不能停在
+	# 前面测试已经删掉的临时剧本上。
+	main_node.call("_back_to_title")
+	main_node.call("_on_start_requested")
+	await _wait(0.2)
+
+	# --- 种类表 ---
+	_ok(ScreenFxSpec.KINDS.size() >= 5, "内置全屏特效 %d 种" % ScreenFxSpec.KINDS.size())
+	var seen_modes := {}
+	var broken: Array = []
+	for kind in ScreenFxSpec.KINDS:
+		var m := ScreenFxSpec.mode_of(kind)
+		if m < 0 or seen_modes.has(m):
+			broken.append(String(kind))
+		seen_modes[m] = true
+	_ok(broken.is_empty(), "每种特效都映射到唯一的 shader mode")
+	_ok(ScreenFxSpec.is_valid("glitch") and ScreenFxSpec.is_valid("none"),
+		"is_valid 认得种类与 none")
+	_ok(not ScreenFxSpec.is_valid("glitch_typo"), "is_valid 不认拼错的种类")
+
+	# --- 节点与层级 ---
+	var fx: ScreenFx = main_node.get("screen_fx") as ScreenFx
+	_ok(fx != null, "拿到全屏特效节点")
+	if fx == null:
+		return
+
+	var fx_layer := fx.get_parent() as CanvasLayer
+	var ui_layer := main_node.get("ui_layer") as CanvasLayer
+	if fx_layer != null and ui_layer != null:
+		_ok(fx_layer.layer > ui_layer.layer,
+			"特效层（layer=%d）在 UI 层（layer=%d）之上 —— 否则对话框不跟着动"
+				% [fx_layer.layer, ui_layer.layer])
+	else:
+		_ok(false, "特效层或 UI 层拿不到")
+
+	_ok(not fx.is_active(), "初始没有特效在跑")
+	_ok(not fx.is_capture_enabled(),
+		"不生效时连 BackBufferCopy 都不开（不做无谓的全屏拷贝）")
+
+	# --- 持续型 ---
+	_ok(fx.play("glitch", 1.5, 0.0), "播放持续型特效")
+	_ok(fx.is_active(), "持续型特效生效中")
+	_ok(fx.get_kind() == "glitch" and is_equal_approx(fx.get_strength(), 1.5),
+		"种类与强度都记下来了")
+	_ok(fx.get_mode() == ScreenFxSpec.mode_of("glitch"), "mode 映射正确")
+	_ok(fx.is_capture_enabled(), "生效时 BackBufferCopy 打开（否则读不到 UI 层）")
+
+	var copy := fx.get_parent().get_node_or_null("ScreenFxCopy")
+	_ok(copy is BackBufferCopy, "BackBufferCopy 已建出来")
+	if copy is BackBufferCopy:
+		_ok(copy.get_index() == fx.get_index() - 1,
+			"BackBufferCopy 恰好排在特效前一位（%d / %d）"
+				% [copy.get_index(), fx.get_index()])
+
+	# 未知种类要拒绝，而且**不能**把正在跑的特效顶掉
+	_ok(not fx.play("并没有这个特效", 1.0, 0.0), "未知种类被拒绝")
+	_ok(fx.get_kind() == "glitch", "被拒绝的指令不会顶掉当前特效")
+
+	fx.stop(0.0)
+	_ok(not fx.is_active() and fx.get_kind() == ScreenFxSpec.OFF, "stop(0) 立刻关闭")
+	_ok(not fx.is_capture_enabled(), "关闭后 BackBufferCopy 也跟着停")
+
+	# --- 模态面板要把它收起来 ---
+	fx.play("wave", 1.0, 0.0)
+	main_node.call("_open_settings")
+	_ok(fx.is_suspended() and not fx.is_rendering(),
+		"设置面板打开时特效被收起（面板上的字得看得清）")
+	_ok(is_equal_approx(fx.get_strength(), 1.0), "收起只是不显示，强度保留")
+	main_node.call("_close_modals")
+	_ok(not fx.is_suspended() and fx.is_rendering(),
+		"面板关掉后特效原样接着演（长镜头不会被打断）")
+
+	# --- 脉冲型：到点自己收回 0 ---
+	_ok(fx.play("pixelate", 1.0, 0.3), "播放脉冲型特效")
+	await _wait(0.12)
+	_ok(fx.is_active(), "脉冲中途强度不为零")
+	await _wait(0.45)
+	_ok(not fx.is_active(), "脉冲到时自己收回 0（不需要脚本再关一次）")
+
+	# --- 回滚要能还原特效 ---
+	fx.play("invert", 1.6, 0.0)
+	var snapshot: Dictionary = main_node.call("_make_snapshot", "say")
+	_ok(snapshot.has("fx"), "回滚快照带上了特效状态")
+	fx.clear()
+	main_node.call("_apply_snapshot", snapshot)
+	_ok(fx.get_kind() == "invert" and is_equal_approx(fx.get_strength(), 1.6),
+		"回滚能还原到那一刻的特效（直接落到位，不重播淡入）")
+
+	# --- 复位点 ---
+	fx.play("swirl", 1.0, 0.0)
+	main_node.call("_on_stage_command", {"op": "clear"})
+	_ok(not fx.is_active(), "clear 指令会关掉特效")
+
+	fx.play("swirl", 1.0, 0.0)
+	main_node.call("_restore_session", {}, {}, [], "", "")
+	_ok(not fx.is_active(),
+		"读档 / 重播结束会关掉特效（新画面上不该糊着存档那一刻的错乱）")
+
+	fx.play("swirl", 1.0, 0.0)
+	main_node.call("_back_to_title")
+	_ok(not fx.is_active(), "回标题会关掉特效（否则标题界面一直糊着）")

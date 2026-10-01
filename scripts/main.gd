@@ -25,6 +25,9 @@ const THUMB_INTERVAL_MS := 15000
 const ROLLBACK_CAPACITY := 100
 
 @onready var stage: Stage = %Stage
+## 全屏特效层。在 UILayer 之上（见 main.tscn 的 FxLayer），
+## 所以它连对话框一起变形 —— 这是刻意的。
+@onready var screen_fx: ScreenFx = %ScreenFx
 @onready var dialogue: DialogueBox = %DialogueBox
 @onready var choices: ChoicePanel = %ChoicePanel
 @onready var backlog: BacklogPanel = %BacklogPanel
@@ -128,6 +131,13 @@ func _ready() -> void:
 	ui_layer.add_child(records)
 	records.chapter_requested.connect(_on_chapter_requested)
 	title.records_requested.connect(func() -> void: records.present())
+
+	# 模态面板打开时把全屏特效收起来。特效层在 UI 之上，不收的话面板会跟着
+	# 一起扭曲 —— 玩家正在读的那一屏恰恰最不该糊。挂在各个面板的
+	# visibility_changed 上而不是每个开关处各写一行：面板有一堆入口
+	# （按钮 / 快捷键 / 标题界面 / 剧本），漏一处就是一个「面板糊了」的 bug。
+	for panel in [backlog, settings, save_load, gallery, cg_viewer, title, records]:
+		(panel as CanvasItem).visibility_changed.connect(_refresh_fx_suspension)
 
 	# 调试控制台只在 debug 构建里建出来 —— 导出版本不该带这个后门。
 	# setup 必须在 add_child 之前调用，否则 _ready 里拿不到 main 引用。
@@ -325,8 +335,24 @@ func _on_stage_command(cmd: Dictionary) -> void:
 		"hide_cg":
 			stage.hide_cg(float(cmd.get("fade", 0.4)),
 				String(cmd.get("transition", "fade")))
+		"screen_fx":
+			screen_fx.play(String(cmd.get("kind", ScreenFxSpec.OFF)),
+				float(cmd.get("strength", 1.0)),
+				float(cmd.get("duration", ScreenFxSpec.DEFAULT_DURATION)))
 		"clear":
 			stage.clear()
+			screen_fx.clear()
+
+
+## 全屏特效是否该被模态面板压住。
+##
+## 「全屏」意味着它盖在对话框和按钮上，而玩家要读的字也在那儿 ——
+## 所以只要有面板在显示，就把特效层收起来。收起不动强度：
+## 面板关掉后特效原样接着演，「一直扭曲」这类长镜头不会被打断。
+func _refresh_fx_suspension() -> void:
+	screen_fx.set_suspended(
+		backlog.visible or settings.visible or save_load.visible
+		or gallery.visible or cg_viewer.visible or title.visible or records.visible)
 
 
 ## 全屏震动时同时震 UI 层。
@@ -533,6 +559,11 @@ func _make_snapshot(kind: String) -> Dictionary:
 		"voice": _line_voice,
 		# 含这一句的长度；回滚时截回这个数，这一句恰好还在
 		"backlog_size": _backlog_entries.size(),
+		# 全屏特效单独带一份。它不在 stage.get_state() 里 —— 那是存档也要用的
+		# 形状，而特效是瞬时状态、不该跟着存档走（读档不该进来就糊着）。
+		# 但它必须进**回滚**快照：否则往回翻一句，一个十行前设的持续特效
+		# 就被抹掉了，玩家会以为是自己看错了。
+		"fx": {"kind": screen_fx.get_kind(), "strength": screen_fx.get_strength()},
 	}
 
 
@@ -560,6 +591,11 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
 
 	GameManager.from_dict(snapshot.get("game", {}))
 	stage.restore_state(snapshot.get("stage", {}))
+	# 特效直接落到快照那一刻的状态，不做淡入 —— 回滚是「回到那一刻」，
+	# 那一刻它本来就是完全体，再播一遍过渡反而是错的。
+	var fx: Dictionary = snapshot.get("fx", {})
+	screen_fx.restore_fx(String(fx.get("kind", ScreenFxSpec.OFF)),
+		float(fx.get("strength", 0.0)))
 
 	# 回看记录截回那一句。快照存的是「含这一句」的长度，所以这一句保留、
 	# 它之后的全部丢掉。
@@ -749,6 +785,9 @@ func _show_title() -> void:
 	dialogue.hide_box()
 	choices.dismiss()
 	_close_modals()
+	# 回到标题也是一次「跳到别处」。不清的话，一个 duration<=0 的持续特效
+	# 会一直糊在标题界面上，看起来像游戏坏了。
+	screen_fx.clear()
 
 
 func _back_to_title() -> void:
@@ -768,6 +807,7 @@ func _back_to_title() -> void:
 func _on_start_requested(file: String = "", label: String = "") -> void:
 	GameManager.reset_run()
 	stage.clear()
+	screen_fx.clear()
 	_backlog_entries.clear()
 	_rollback.clear()
 	_last_speaker = ""
@@ -882,6 +922,9 @@ func _restore_session(game: Dictionary, stage_state: Dictionary, backlog: Array,
 		speaker: String, text: String) -> void:
 	GameManager.from_dict(game)
 	stage.restore_state(stage_state)
+	# 全屏特效是瞬时状态，不跟着存档走 —— 读档进来时屏幕上不该还糊着
+	# 存档那一刻的错乱。重播结束同理：插叙放完回正片，别把特效留在屏幕上。
+	screen_fx.clear()
 	_backlog_entries = _sanitize_backlog(backlog)
 	_last_speaker = speaker
 	_last_text = text
@@ -1062,10 +1105,13 @@ func _stop_auto_features() -> void:
 
 
 func _refresh_toggle_buttons() -> void:
-	# 用 set_text 而不是直接赋值：这两个按钮的文字会随状态变，
-	# 记下 key 才能在切语言时重新算（直接赋值会被 apply_tree 当成新原文）
-	I18n.set_text(_btn_auto, "自动（开）" if _auto_mode else "自动")
-	I18n.set_text(_btn_skip, "跳过（开）" if _skip_mode else "跳过")
+	# 「开」不再写进文字（旧的「自动（开）」后缀），改用变色反馈：
+	# 激活时按钮呈按下锁定态（pressed 贴图 + 深色字）。
+	# 文案恒为「自动」/「跳过」，仍走 set_text 记下 i18n key。
+	I18n.set_text(_btn_auto, "自动")
+	I18n.set_text(_btn_skip, "跳过")
+	UiTheme.apply_toggled_look(_btn_auto, "hud", _auto_mode)
+	UiTheme.apply_toggled_look(_btn_skip, "hud", _skip_mode)
 
 
 func _style_hud() -> void:

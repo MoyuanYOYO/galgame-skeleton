@@ -29,7 +29,7 @@ const KEY_ERRORS := "errors"
 const KEYWORDS: PackedStringArray = [
 	"label", "jump", "goto", "call", "return", "jump_file",
 	"bg", "show", "hide", "move", "expr", "clear",
-	"hop", "zoom", "shake", "screen_shake", "screen_flash",
+	"hop", "zoom", "shake", "screen_shake", "screen_flash", "screen_fx",
 	"bg_motion", "weather",
 	"cg", "hide_cg", "unlock",
 	"bgm", "se", "voice",
@@ -247,6 +247,7 @@ class Builder extends RefCounted:
 			"shake": _do_shake(tokens)
 			"screen_shake": _do_screen_shake(tokens)
 			"screen_flash": _do_screen_flash(tokens)
+			"screen_fx": _do_screen_fx(tokens)
 			"bg_motion": _do_bg_motion(tokens)
 			"weather": _do_weather(tokens)
 			"expr": _do_expr(tokens)
@@ -450,6 +451,30 @@ class Builder extends RefCounted:
 			"op": "screen_flash",
 			"color": String(kv.get("color", "#ffffff")),
 			"duration": float(kv.get("duration", 0.25)),
+		})
+
+	## 全屏后处理特效：glitch / wave / swirl / pixelate / chromatic / invert / blur
+	##
+	## 这里对未知种类**直接报错**，不像 weather 那样静默降级成 none。
+	## 理由：种类是一个封闭的小集合，写错基本只有「拼错」一种可能，
+	## 而静默降级的后果是「剧本写了、演出不出来」，正是本项目最想避免的那类
+	## bug（tools/audit 会把这条错误变成 CI 的非零退出码）。
+	##
+	## duration <= 0 表示持续到显式关闭（`screen_fx none` 或下一条 screen_fx）。
+	func _do_screen_fx(tokens: PackedStringArray) -> void:
+		if tokens.size() < 2:
+			error("screen_fx 缺少类型（%s）" % ScreenFxSpec.list_text())
+			return
+		var kind := String(tokens[1])
+		if not ScreenFxSpec.is_valid(kind):
+			error("screen_fx 未知类型 %s（可用：%s）" % [kind, ScreenFxSpec.list_text()])
+			return
+		var kv := GvsParser.parse_kv(tokens, 2)
+		commands.append({
+			"op": "screen_fx",
+			"kind": kind,
+			"strength": float(kv.get("strength", 1.0)),
+			"duration": float(kv.get("duration", ScreenFxSpec.DEFAULT_DURATION)),
 		})
 
 	## 背景运镜（Ken Burns）：缓慢缩放 / 平移，让静止的背景「活」起来

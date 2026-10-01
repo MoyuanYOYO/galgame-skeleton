@@ -243,13 +243,146 @@ static func stylebox(bg: Color, radius: int = 10,
 
 
 ## 给 Panel / PanelContainer 套上统一面板样式
-static func apply_panel(node: Control, preset_name: String = "default",
-		bg: Color = PANEL_BG) -> void:
+##
+## 配了 `panels.<预设>.texture` 就用九宫格贴图，否则回退到程序化圆角矩形 ——
+## 和按钮是同一套逻辑，删掉贴图文件不会让面板报错，只是变回代码画的样子。
+## 面板样式：配了贴图用九宫格，否则程序化圆角矩形。
+## 需要拿到 StyleBox 而不是直接套到节点上时（比如面板还要自己改样式），用这个。
+static func panel_stylebox(preset_name: String = "default",
+		bg: Color = PANEL_BG) -> StyleBox:
 	_ensure()
 	var d := _sub_preset("panels", preset_name)
+
 	var radius := int(d.get("radius", 16))
 	var border := int(d.get("border_width", 1))
-	node.add_theme_stylebox_override("panel", stylebox(bg, radius, BORDER, border))
+	# 内边距必须两条分支一致。曾经贴图分支漏传，content_margin 变成 0，
+	# 面板里的文字直接贴到边上、还压在圆角上 —— 加了贴图反而把布局弄坏了。
+	var pad_h := int(d.get("pad_h", 20))
+	var pad_v := int(d.get("pad_v", 12))
+
+	var path := String(d.get("texture", "")).strip_edges()
+	if not path.is_empty():
+		# tile=false：贴图上带的是**整圈装饰边框**，必须拉伸铺开；
+		# 平铺会把边线截断成重复的短线。
+		var sb := load_ninepatch(path, int(d.get("texture_margin", 24)),
+			pad_h, pad_v, Color.WHITE, false)
+		if sb != null:
+			return sb
+
+	return stylebox(bg, radius, BORDER, border, pad_h, pad_v)
+
+
+## 给 Panel / PanelContainer 套上统一面板样式
+##
+## 编辑器里手动 override 过的节点直接跳过 —— 在 Inspector 的
+## Theme Overrides 里改 StyleBox 会存进 tscn，运行时在这里盖掉它
+## 会让「编辑器手改」全部白改。想让节点回到主题，在 Inspector 里
+## 右键该属性 → Revert 即可。
+static func apply_panel(node: Control, preset_name: String = "default",
+		bg: Color = PANEL_BG) -> void:
+	if node.has_theme_stylebox_override("panel"):
+		return
+	node.add_theme_stylebox_override("panel", panel_stylebox(preset_name, bg))
+
+
+# ---------------------------------------------------------------------------
+# 文本框（对话框 / 名牌）
+# 和面板一样：有贴图用九宫格，没有就退回程序化圆角矩形
+# ---------------------------------------------------------------------------
+
+## 对话框背景。内边距走 dialogue 段的 pad_h / pad_v，保证贴图和文字间距一致。
+## pad_top / pad_bottom 可选：没有时回落 pad_v。浅色贴图的纸面比控件内缩
+## shadow_pad，上下需要的留白不一样（名牌压顶、下一句箭头贴底），分开配。
+static func dialogue_stylebox(bg: Color) -> StyleBox:
+	var pad_h := int(dialogue_value("pad_h", 46))
+	var pad_v := int(dialogue_value("pad_v", 30))
+	var pad_top := int(dialogue_value("pad_top", float(pad_v)))
+	var pad_bottom := int(dialogue_value("pad_bottom", float(pad_v)))
+	var path := String(section("dialogue").get("texture", "")).strip_edges()
+	var sb: StyleBox
+	if not path.is_empty():
+		sb = load_ninepatch(path, int(dialogue_value("texture_margin", 48)),
+			pad_h, pad_v, Color.WHITE, false)
+		if sb != null:
+			sb.content_margin_top = float(pad_top)
+			sb.content_margin_bottom = float(pad_bottom)
+			_apply_shadow(sb)
+			return sb
+	sb = stylebox(bg, int(dialogue_value("radius", 18)), BORDER,
+		int(dialogue_value("border_width", 1)), pad_h, pad_v)
+	_apply_shadow(sb)
+	return sb
+
+
+## 浮起投影（shadow_color / shadow_alpha / shadow_size / shadow_offset_y）。
+## 只对程序化回退的 StyleBoxFlat 生效 —— StyleBoxTexture 没有 shadow_*
+## 属性（给它赋值会报 SCRIPT ERROR），贴图路径的投影烘在 PNG 里
+## （build_ui_sakura_washi.py 的 shadow_pad）。没配 shadow_size 或 <= 0
+## 时不加，配置缺省的旧主题行为不变。
+static func _apply_shadow(sb: StyleBox) -> void:
+	var d := section("dialogue")
+	var size := int(d.get("shadow_size", 0))
+	if size <= 0:
+		return
+	var flat := sb as StyleBoxFlat
+	if flat == null:
+		return
+	var col := Color.from_string(String(d.get("shadow_color", "#000000")),
+		Color(0, 0, 0, 0.3))
+	col.a = float(d.get("shadow_alpha", 0.3))
+	flat.shadow_color = col
+	flat.shadow_size = float(size)
+	flat.shadow_offset = Vector2(0.0, float(d.get("shadow_offset_y", 8.0)))
+
+
+## 说话人名牌背景
+static func nameplate_stylebox(bg: Color) -> StyleBox:
+	var pad_h := int(dialogue_value("name_pad_h", 24))
+	var pad_v := int(dialogue_value("name_pad_v", 6))
+	var path := String(section("dialogue").get("name_texture", "")).strip_edges()
+	if not path.is_empty():
+		var sb := load_ninepatch(path, int(dialogue_value("name_texture_margin", 24)),
+			pad_h, pad_v, Color.WHITE, false)
+		if sb != null:
+			return sb
+	return stylebox(bg, 10, BORDER, 1, pad_h, pad_v)
+
+
+## 按路径构造九宫格样式；路径为空 / 文件不存在 / 载入失败都返回 null，
+## 调用方据此决定是否回退 —— 这样「素材缺失」永远表现为回退，而不是报错。
+##
+## tile=true 时中心与四边用**平铺**而不是拉伸：面板贴图上带着底纹，
+## 拉伸会把花纹放大糊成一团；平铺能保持花纹原尺寸。
+static func load_ninepatch(path: String, margin: int,
+		pad_h: int = 0, pad_v: int = 0,
+		modulate: Color = Color.WHITE, tile: bool = false) -> StyleBoxTexture:
+	if path.is_empty() or not ResourceLoader.exists(path):
+		return null
+	var texture := load(path) as Texture2D
+	if texture == null:
+		return null
+	return texture_stylebox(texture, margin, pad_h, pad_v, modulate, tile)
+
+
+## 通用的九宫格样式构造
+static func texture_stylebox(texture: Texture2D, margin: int,
+		pad_h: int = 0, pad_v: int = 0,
+		modulate: Color = Color.WHITE, tile: bool = false) -> StyleBoxTexture:
+	var sb := StyleBoxTexture.new()
+	sb.texture = texture
+	sb.texture_margin_left = float(margin)
+	sb.texture_margin_right = float(margin)
+	sb.texture_margin_top = float(margin)
+	sb.texture_margin_bottom = float(margin)
+	sb.content_margin_left = float(pad_h)
+	sb.content_margin_right = float(pad_h)
+	sb.content_margin_top = float(pad_v)
+	sb.content_margin_bottom = float(pad_v)
+	sb.modulate_color = modulate
+	if tile:
+		sb.axis_stretch_horizontal = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+		sb.axis_stretch_vertical = StyleBoxTexture.AXIS_STRETCH_MODE_TILE
+	return sb
 
 
 # ---------------------------------------------------------------------------
@@ -274,7 +407,22 @@ static func apply_button(btn: Button, preset_name: String = "default") -> void:
 	_ensure()
 	var p := preset(preset_name)
 
-	for state in ["normal", "hover", "pressed", "disabled", "focus"]:
+	# focus 态必须在「编辑器手改优先」的提前 return 之前处理：
+	# 不 override 的话 Godot 默认给黑色方框边框 + 白色文字 ——
+	# 选项面板第一个按钮会 grab_focus，切肤后立刻暴露。
+	if not btn.has_theme_stylebox_override("focus"):
+		btn.add_theme_stylebox_override("focus", _focus_stylebox(p))
+	if not btn.has_theme_color_override("font_focus_color"):
+		btn.add_theme_color_override("font_focus_color",
+			_preset_color(p, "font_color", TEXT))
+
+	# 同 apply_panel：编辑器里手动 override 过的按钮不再被主题覆盖
+	if btn.has_theme_stylebox_override("normal"):
+		return
+
+	# focus 不走 _button_stylebox：贴图九宫格当 focus 样式会整个盖在
+	# 按钮上（贴图按钮的 focus 只需要一圈细边框提示键盘导航）
+	for state in ["normal", "hover", "pressed", "disabled"]:
 		btn.add_theme_stylebox_override(state, _button_stylebox(p, state))
 
 	btn.add_theme_color_override("font_color", _preset_color(p, "font_color", TEXT))
@@ -326,6 +474,22 @@ static func _play_ui_sfx(btn: Button, preset_name: String, kind: String) -> void
 	if id.is_empty():
 		return
 	AudioManager.play_se(id, float(audio.get(kind + "_volume", 0.7)))
+
+
+## 开关型按钮（HUD 的自动 / 跳过）的激活态反馈：开启时整个按钮呈
+## 「按住锁定」的样子 —— 复用预设的 pressed 贴图与字色，不新增配置键。
+## 关闭时恢复 normal / hover。文字本身不随状态变（不像旧的「自动（开）」）。
+static func apply_toggled_look(btn: Button, preset_name: String, on: bool) -> void:
+	_ensure()
+	var p := preset(preset_name)
+	var state := "pressed" if on else ""
+	# 激活时 normal / hover / pressed 三态都用按下贴图：锁住的按钮
+	# 悬停不该突然变亮，那看起来像被解锁了
+	for st in ["normal", "hover", "pressed"]:
+		var look: String = state if not state.is_empty() else st
+		btn.add_theme_stylebox_override(st, _button_stylebox(p, look))
+		btn.add_theme_color_override("font_" + st + "_color",
+			_preset_color(p, "font_" + look + "_color", TEXT))
 
 
 ## 有九宫格贴图就用 StyleBoxTexture，否则用程序化圆角矩形
@@ -390,10 +554,6 @@ static func _flat_stylebox(p: Dictionary, state: String) -> StyleBoxFlat:
 			sb.bg_color = Color(0.30, 0.30, 0.36, 0.14)
 			sb.set_border_width_all(1)
 			sb.border_color = Color(0.40, 0.40, 0.46)
-		"focus":
-			sb.bg_color = Color(0, 0, 0, 0)
-			sb.set_border_width_all(2)
-			sb.border_color = ACCENT_BRIGHT
 
 	sb.set_corner_radius_all(int(p.get("radius", 10)))
 	var pad_h := int(p.get("pad_h", 24))
@@ -405,22 +565,66 @@ static func _flat_stylebox(p: Dictionary, state: String) -> StyleBoxFlat:
 	return sb
 
 
+## 焦点态样式：透明底 + 主题色细边框。不 override 的话 Godot 默认给
+## 黑色方框（浅色主题上尤其突兀），这就是「按钮按下出现黑框」的来源。
+## 不用贴图 —— 九宫格贴图当 focus 会整块盖在按钮上面。
+static func _focus_stylebox(p: Dictionary) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0, 0, 0, 0)
+	sb.set_border_width_all(2)
+	sb.border_color = ACCENT_BRIGHT
+	sb.set_corner_radius_all(int(p.get("radius", 10)))
+	return sb
+
+
+# ---------------------------------------------------------------------------
+# 滑块
+# ---------------------------------------------------------------------------
+
+## 设置面板的滑块配色：已填充一侧（左）用 accent 深色、未填充轨道（右）浅色。
+## Godot 默认主题正好反过来（左浅右深），在浅色纸面上「进度」读反了。
+## 手柄保持默认图标 —— 只有轨道配色是问题。
+static func apply_slider(s: HSlider) -> void:
+	_ensure()
+	var track := StyleBoxFlat.new()
+	# 压深 10%：轨道要和奶油面板底拉开一档，否则未填充段快看不见了
+	track.bg_color = PANEL_BG_SOFT.darkened(0.10)
+	var fill := StyleBoxFlat.new()
+	fill.bg_color = ACCENT
+	var fill_hi := StyleBoxFlat.new()
+	fill_hi.bg_color = ACCENT_BRIGHT
+	for sb: StyleBoxFlat in [track, fill, fill_hi]:
+		sb.set_corner_radius_all(4)
+		sb.content_margin_top = 4.0
+		sb.content_margin_bottom = 4.0
+	s.add_theme_stylebox_override("slider", track)
+	s.add_theme_stylebox_override("grabber_area", fill)
+	s.add_theme_stylebox_override("grabber_area_highlight", fill_hi)
+
+
 # ---------------------------------------------------------------------------
 # 标签
 # ---------------------------------------------------------------------------
 
 static func apply_label(label: Label, color: Color = TEXT, font_size: int = 22,
 		font_key: String = "") -> void:
-	label.add_theme_color_override("font_color", color)
-	label.add_theme_font_size_override("font_size", font_size)
+	# 手动 override 优先（同 apply_panel 的约定）：编辑器里改过的颜色 /
+	# 字号不被主题盖掉
+	if not label.has_theme_color_override("font_color"):
+		label.add_theme_color_override("font_color", color)
+	if not label.has_theme_font_size_override("font_size"):
+		label.add_theme_font_size_override("font_size", font_size)
 	if not font_key.is_empty():
 		apply_font(label, font_key)
 
 
 static func apply_rich_text(label: RichTextLabel, color: Color = TEXT,
 		font_size: int = 28, font_key: String = "") -> void:
-	label.add_theme_color_override("default_color", color)
-	label.add_theme_font_size_override("normal_font_size", font_size)
+	# 同上
+	if not label.has_theme_color_override("default_color"):
+		label.add_theme_color_override("default_color", color)
+	if not label.has_theme_font_size_override("normal_font_size"):
+		label.add_theme_font_size_override("normal_font_size", font_size)
 	if not font_key.is_empty():
 		apply_font(label, font_key)
 

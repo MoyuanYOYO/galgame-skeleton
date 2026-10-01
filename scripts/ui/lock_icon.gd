@@ -7,9 +7,9 @@ extends Control
 ## 上方一个半圆环锁梁，下方一个圆角锁体，中间一个钥匙孔。
 ## 锁体用 StyleBoxFlat 绘制以获得真正的圆角。
 
-var body_color: Color = Color(0.42, 0.40, 0.55)
-var shackle_color: Color = Color(0.52, 0.49, 0.66)
-var keyhole_color: Color = Color(0.08, 0.07, 0.13)
+var body_color: Color = Color(0.72, 0.60, 0.54)   # 暖褐灰：在奶油卡片上够显眼，不偏紫
+var shackle_color: Color = Color(0.80, 0.70, 0.64)
+var keyhole_color: Color = Color(0.30, 0.24, 0.20)
 
 var _body_style: StyleBoxFlat
 

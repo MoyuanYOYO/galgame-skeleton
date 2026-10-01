@@ -2,20 +2,20 @@
   "_comment": "鉴赏界面外观配置。改这个文件就能换皮 —— 配色、列数、卡片比例、文案、可视化模式全部数据驱动，不需要动一行代码。",
 
   "palette": {
-	"background": "#0b0a14",
-	"panel": "#16132b",
-	"panel_border": "#6c63c9",
-	"card": "#1c1932",
-	"card_border": "#3d3768",
-	"card_hover": "#2a2450",
-	"card_locked": "#131124",
-	"accent": "#7f77dd",
-	"accent_bright": "#9a93ec",
-	"text": "#ece9ff",
-	"text_dim": "#a9a3d0",
-	"text_locked": "#5d5878",
-	"highlight": "#f1c774",
-	"success": "#71c89c"
+	"background": "#2a1f18",
+	"panel": "#fefaf4",
+	"panel_border": "#e8b4a0",
+	"card": "#fff7ef",
+	"card_border": "#f0d2c2",
+	"card_hover": "#ffede2",
+	"card_locked": "#f2e7dc",
+	"accent": "#e0836c",
+	"accent_bright": "#f0a190",
+	"text": "#4c4038",
+	"text_dim": "#9d8d81",
+	"text_locked": "#bca99e",
+	"highlight": "#e88a72",
+	"success": "#5e9a80"
   },
 
   "layout": {

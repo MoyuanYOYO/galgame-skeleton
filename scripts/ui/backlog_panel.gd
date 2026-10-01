@@ -50,10 +50,14 @@ func present(entries: Array) -> void:
 		label.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		# 不给它注册特效的话，[bounce] 这类标记会因为「未知标签」漏成文本
 		label.custom_effects = effects
+		# 颜色走主题（文字色 / 强调色）而不是写死的十六进制 ——
+		# 换浅色主题时旧的浅紫 / 金色字会直接看不清。
 		if speaker.is_empty():
-			label.text = "[color=#a9a3d0]%s[/color]" % text
+			label.text = "[color=%s]%s[/color]" % [
+				UiTheme.TEXT_DIM.to_html(false), text]
 		else:
-			label.text = "[color=#f1c774]%s[/color]  %s" % [speaker, text]
+			label.text = "[color=%s]%s[/color]  %s" % [
+				UiTheme.ACCENT.to_html(false), speaker, text]
 		UiTheme.apply_rich_text(label, UiTheme.TEXT, 22)
 		_entries.add_child(label)
 

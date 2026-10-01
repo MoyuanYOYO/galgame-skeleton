@@ -12,8 +12,8 @@ var gap: float = 4.0
 var scale_factor: float = 6.0
 var idle_wave: float = 0.07
 
-var bar_color: Color = Color(0.50, 0.47, 0.87)
-var peak_color: Color = Color(0.95, 0.93, 1.0)
+var bar_color: Color = Color(0.88, 0.51, 0.42)   # 珊瑚：对齐水彩绘本主题（原薰衣草紫）
+var peak_color: Color = Color(1.0, 0.97, 0.94)
 
 var _values := PackedFloat32Array()
 var _phase: float = 0.0

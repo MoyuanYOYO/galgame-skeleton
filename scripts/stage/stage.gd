@@ -1,3 +1,4 @@
+@tool
 class_name Stage
 extends Control
 
@@ -10,9 +11,22 @@ extends Control
 ##
 ## 坐标基于固定设计分辨率 1920x1080（project.godot 里 stretch 模式为
 ## canvas_items + keep），因此不需要处理多分辨率适配。
+##
+## @tool 说明：背景由剧本指令在运行时加载，编辑器里 Stage 是空的，
+## 摆 UI 时一片黑没有参照。_ready() 里的编辑器分支会放一张预览底图
+## （见 _editor_preview），只存在于编辑器视口、不会写进场景文件。
+
+## 编辑器预览底图路径。想换成天台 / 樱花街道直接在检查器里改。
+@export var editor_preview_bg: String = "res://assets/bg/classroom.png"
 
 const DESIGN := Vector2(1920.0, 1080.0)
-const POSITION_RATIOS := {"left": 0.22, "center": 0.5, "right": 0.78}
+# off_left / off_right 是屏幕外的「离场槽」： CHAR_WIDTH 560，
+# 取 ±0.15 比例时立绘整体在画外（x = -568 / 1928），配合 move
+# 指令做「溜走 / 退场」演出 —— 移到 left 只会走到左侧角色身边。
+const POSITION_RATIOS := {
+	"left": 0.22, "center": 0.5, "right": 0.78,
+	"off_left": -0.15, "off_right": 1.15,
+}
 const CHAR_WIDTH := 560.0
 const CHAR_HEIGHT := 1000.0
 const CHAR_BOTTOM_OVERHANG := 50.0
@@ -43,6 +57,9 @@ var _expr_shader: Shader
 
 
 func _ready() -> void:
+	if Engine.is_editor_hint():
+		_editor_preview()
+		return
 	# 注意：Stage 节点在 main.tscn 里是 full-rect 锚点，尺寸由布局系统接管，
 	# 这里不要再设 size / position，否则会被 _ready() 之后的布局覆盖并报警告。
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -93,6 +110,31 @@ func _ready() -> void:
 	_flash_rect.position = Vector2.ZERO
 	_flash_rect.size = DESIGN
 	add_child(_flash_rect)
+
+
+# ---------------------------------------------------------------------------
+# 编辑器预览（不在游戏里运行）
+# ---------------------------------------------------------------------------
+
+## 只在编辑器视口里放一张底图当参照。
+## 关键点：
+## - 不设 owner —— 节点不会随场景文件保存，纯编辑器里的幻影；
+## - 直接 load 贴图 —— 编辑器场景上下文里 autoload（PlaceholderAssets）
+##   还没注册，走它会直接报「Identifier not declared」。
+func _editor_preview() -> void:
+	if editor_preview_bg.is_empty():
+		return
+	var tex := load(editor_preview_bg) as Texture2D
+	if tex == null:
+		return
+	var rect := TextureRect.new()
+	rect.name = "EditorPreview"
+	rect.texture = tex
+	rect.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+	rect.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+	rect.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	rect.size = DESIGN
+	add_child(rect)
 
 
 # ---------------------------------------------------------------------------

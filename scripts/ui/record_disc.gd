@@ -15,8 +15,8 @@ var label_ratio: float = 0.44
 
 var vinyl_color: Color = Color(0.07, 0.07, 0.10)
 var groove_color: Color = Color(0.17, 0.17, 0.24)
-var label_color: Color = Color(0.50, 0.47, 0.87)
-var marker_color: Color = Color(0.95, 0.93, 1.0)
+var label_color: Color = Color(0.91, 0.54, 0.45)   # 珊瑚：对齐水彩绘本主题（原薰衣草紫）
+var marker_color: Color = Color(1.0, 0.97, 0.94)
 var hole_color: Color = Color(0.06, 0.06, 0.09)
 
 var _angle: float = 0.0

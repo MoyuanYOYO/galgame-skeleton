@@ -132,8 +132,9 @@ Godot 4 视觉小说（galgame）工程骨架。引擎、系统、演出、存�
 
 ## 换素材
 
-`assets/` 目录现在是空的，游戏用**运行时生成的占位图**（按 id 派生色相）。
-把真实素材按下面的名字丢进去就会自动生效，**代码零改动**：
+工程里已经带了一套完整素材（来源与授权见 `assets/ATTRIBUTIONS.md`：美术为 AI 生成，音频为 CC0）。
+即便如此，**把 `assets/` 清空也照样能跑** —— 图片缺失时退回**运行时生成的占位图**（按 id 派生色相），
+音频缺失时静默跳过。想换成自己的素材，按下面的名字覆盖即可，**代码零改动**：
 
 ```
 assets/bg/<背景id>.png              1920×1080，如 classroom.png / rooftop.png
@@ -606,6 +607,55 @@ screen_flash color=#ffffff duration=0.35        # 全屏闪光
 
 抖动偏移用**极坐标**生成而不是各轴独立随机 —— 后者经常抽出接近零的向量（两个分量恰好都很小），看起来就像根本没动。
 
+### 全屏特效
+
+```gvs
+screen_fx glitch                               # 错乱：横条撕裂 + RGB 分离 + 扫描线
+screen_fx glitch strength=1.6 duration=0.35    # 更猛、更短促
+screen_fx wave duration=2.0                    # 波纹扭曲
+screen_fx swirl strength=0.8 duration=0        # 漩涡，持续到手动关闭
+screen_fx none                                 # 关闭
+```
+
+| 种类 | 效果 |
+|---|---|
+| `glitch` | 错乱：随机横条撕裂 + RGB 分离 + 扫描线 |
+| `wave` | 波纹扭曲（横竖两路正弦，相位不同） |
+| `swirl` | 漩涡，越靠中心转得越多 |
+| `pixelate` | 马赛克 |
+| `chromatic` | 色差（红蓝往两边拉开） |
+| `invert` | 反色 / 底片 |
+| `blur` | 模糊 |
+| `none` | 关闭 |
+
+**参数**
+
+- `strength`：默认 `1`。建议 `0.5 ~ 1.5`；`2` 以上基本就是在看花屏。
+- `duration`：默认 `0.8` 秒。这时是**脉冲** —— 快速冲到峰值，再在剩余时长里收回 0。
+  **写 `0` 就是持续**，一直挂到 `screen_fx none`、下一条 `screen_fx`、或读档 / 回标题。
+
+强度参考（按 1920×1080 估，`strength=1` 时）：
+
+| 种类 | 观感 |
+|---|---|
+| `glitch` | 约 14% 的横条被撕开，最大横移 60px 上下 |
+| `wave` | 波纹振幅约 42px |
+| `swirl` | 画面中心旋转约 50°，边缘几乎不动 |
+| `pixelate` | 色块约 58px |
+| `blur` | 半径约 19px |
+
+**「全屏」是字面意思**：这一层排在对话框和 HUD **之上**，所以它们会跟着一起变形 ——
+要的是「整个世界不对劲」，而不是只有背景不对劲。只糊背景的话，UI 会像贴纸一样
+浮在扭曲的画面外面，一眼假。
+
+代价是面板也会被糊掉，所以**任何模态面板（设置 / 存档 / 回看 / 鉴赏 / 记录 / 标题）
+一打开，特效就自动收起来**；关掉后原样接着演，长镜头不会被打断。
+
+底层是 `shaders/screen_fx.gdshader`：一个铺满屏幕的 `ColorRect`，前面紧挨着
+一个 `BackBufferCopy` 把已经画好的整屏 copy 进 back buffer，shader 再用
+`hint_screen_texture` 读它、变形、写回去。想加新种类就到 shader 里补一个
+`mode` 分支，并把名字追加进 `ScreenFxSpec.KINDS`（顺序即 `mode` 值）。
+
 ### 天气与运镜
 
 ```gvs
@@ -716,10 +766,10 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 ## 测试
 
 ```bash
-# 回归测试 · headless（603 项断言，快，适合 CI）
+# 回归测试 · headless（643 项断言，快，适合 CI）
 "D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/smoke.tscn
 
-# 回归测试 · 窗口模式（608 项，多覆盖「真实输入模拟」一节）
+# 回归测试 · 窗口模式（648 项，多覆盖「真实输入模拟」一节）
 "D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/smoke.tscn
 
 # 自动截图：依次驱动全部界面并各存一张 PNG（共 14 张）
@@ -764,10 +814,13 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 | `scripts/core/script_runner.gd` | 指令流状态机（含重播模式） |
 | `scripts/core/rollback_buffer.gd` | 回滚历史缓冲（快照环形队列 + 游标） |
 | `scripts/core/script_paths.gd` | 剧本文件位置的唯一权威（含语言子目录解析） |
+| `scripts/core/screen_fx_spec.gd` | 全屏特效种类表（解析器与演出层共用） |
 | `scripts/core/collection_registry.gd` | 收藏品注册表 |
 | `scripts/core/gallery_theme.gd` | 鉴赏界面主题 |
 | `scripts/autoload/` | Config / Game / Collection / Audio / Save |
 | `scripts/stage/stage.gd` | 演出层（背景 / 立绘 / CG / 转场） |
+| `scripts/stage/screen_fx.gd` | 全屏特效层（在 UI 之上，连对话框一起变形） |
+| `shaders/` | 转场遮罩、立绘表情过渡、全屏特效 |
 | `scripts/ui/` | 全部界面 |
 | `scripts/minigames/` | 小游戏基类与示例 |
 | `data/scripts/` | 剧本 |

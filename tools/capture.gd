@@ -50,6 +50,49 @@ func _ready() -> void:
 	await _wait(1.2)
 	await _shot("04_after_choice")
 
+	# 全屏特效。这是唯一能确认「后处理真的连 UI 一起读到了」的手段 ——
+	# 截下来的图里对话框的文字也该跟着扭曲。逻辑测试看不见这个：
+	# 层放错位置时特效只会糊背景，而断言照样全绿。
+	_main.call("_on_stage_command",
+		{"op": "screen_fx", "kind": "glitch", "strength": 1.2, "duration": 0.0})
+	await _wait(0.4)
+	await _shot("04b_fx_glitch")
+	_main.call("_on_stage_command",
+		{"op": "screen_fx", "kind": "wave", "strength": 1.2, "duration": 0.0})
+	await _wait(0.4)
+	await _shot("04c_fx_wave")
+	_main.call("_on_stage_command",
+		{"op": "screen_fx", "kind": "swirl", "strength": 0.9, "duration": 0.0})
+	await _wait(0.4)
+	await _shot("04d_fx_swirl")
+	_main.call("_on_stage_command",
+		{"op": "screen_fx", "kind": "pixelate", "strength": 0.7, "duration": 0.0})
+	await _wait(0.4)
+	await _shot("04e_fx_pixelate")
+	_main.call("_on_stage_command",
+		{"op": "screen_fx", "kind": "blur", "strength": 1.2, "duration": 0.0})
+	await _wait(0.4)
+	await _shot("04f_fx_blur")
+	# 用 clear 关（而不是走剧本的 clear 指令）—— 后者会顺手把舞台也清空，
+	# 后面的截图就没有背景了
+	_main.get("screen_fx").call("clear")
+	await _wait(0.2)
+
+	# 模态面板要压住特效。这两张是一对：08b 里设置面板应当是**干净**的
+	# （特效被收起），08c 关掉面板后扭曲又回来 —— 证明只是暂时不显示，
+	# 而不是把特效关掉了。
+	_main.call("_on_stage_command",
+		{"op": "screen_fx", "kind": "wave", "strength": 1.4, "duration": 0.0})
+	await _wait(0.3)
+	_main.call("_open_settings")
+	await _wait(0.8)
+	await _shot("08b_settings_over_fx")
+	_main.call("_close_modals")
+	await _wait(0.5)
+	await _shot("08c_fx_resumed")
+	_main.get("screen_fx").call("clear")
+	await _wait(0.2)
+
 	guard = 600
 	while not runner.is_waiting_minigame() and guard > 0:
 		guard -= 1

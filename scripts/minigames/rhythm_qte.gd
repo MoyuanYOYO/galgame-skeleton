@@ -175,17 +175,22 @@ func _update_visuals() -> void:
 
 func _build_ui() -> void:
 	var overlay := ColorRect.new()
-	overlay.color = Color(0.043, 0.039, 0.078, 0.94)
+	# 画布底色跟主题走（panel_bg）。文字色 palette.text 在浅色主题下是深墨色，
+	# 画布再写死深色就会出现「深底深字」。
+	overlay.color = Color(UiTheme.PANEL_BG.r, UiTheme.PANEL_BG.g,
+		UiTheme.PANEL_BG.b, 0.94)
 	overlay.position = Vector2.ZERO
 	overlay.size = DESIGN
 	overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(overlay)
 
 	_make_label("节奏 QTE", 56, UiTheme.TEXT, 190.0, HORIZONTAL_ALIGNMENT_CENTER)
-	_status_label = _make_label("", 30, UiTheme.SPEAKER, 288.0, HORIZONTAL_ALIGNMENT_CENTER)
+	_status_label = _make_label("", 30, UiTheme.ACCENT, 288.0, HORIZONTAL_ALIGNMENT_CENTER)
 
 	var bar_bg := ColorRect.new()
-	bar_bg.color = Color(0.16, 0.15, 0.26, 1.0)
+	# 轨道色 = 主题次要文字色压一层透明度，深浅主题都能用
+	bar_bg.color = Color(UiTheme.TEXT_DIM.r, UiTheme.TEXT_DIM.g,
+		UiTheme.TEXT_DIM.b, 0.38)
 	bar_bg.position = Vector2((DESIGN.x - BAR_WIDTH) * 0.5, BAR_Y)
 	bar_bg.size = Vector2(BAR_WIDTH, BAR_HEIGHT)
 	bar_bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -206,7 +211,7 @@ func _build_ui() -> void:
 	_make_label("按下 [空格] 或 [鼠标左键] —— 让指针停在绿色判定区内",
 		24, UiTheme.TEXT_DIM, 770.0, HORIZONTAL_ALIGNMENT_CENTER)
 	_feedback_label = _make_label("", 46, UiTheme.TEXT, 840.0, HORIZONTAL_ALIGNMENT_CENTER)
-	_result_label = _make_label("", 40, UiTheme.SPEAKER, 920.0, HORIZONTAL_ALIGNMENT_CENTER)
+	_result_label = _make_label("", 40, UiTheme.ACCENT, 920.0, HORIZONTAL_ALIGNMENT_CENTER)
 	_result_label.visible = false
 
 	_update_visuals()

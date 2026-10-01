@@ -328,7 +328,7 @@ func _execute(cmd: Dictionary) -> void:
 		# 只留一条 warning，玩家完全看不出问题。smoke 第 18 节专门守这个。
 		"bg", "show", "hide", "move", "expr", "clear", "hide_cg":
 			stage_command.emit(cmd)
-		"hop", "zoom", "shake", "screen_shake", "screen_flash", "bg_motion", "weather":
+		"hop", "zoom", "shake", "screen_shake", "screen_flash", "screen_fx", "bg_motion", "weather":
 			stage_command.emit(cmd)
 		"cg":
 			# 展示 CG 的同时把它计入收藏
