@@ -25,6 +25,10 @@ signal records_requested()
 @onready var _settings_button: Button = %SettingsButton
 @onready var _quit_button: Button = %QuitButton
 
+## 周目提示（「第 2 周目 · 已通关 1 次」）。代码建、插在副标题下面 ——
+## 不动 main.tscn：这一行是可选的装饰，加在场景里反而让 tscn 更难读。
+var _cycle_label: Label
+
 
 ## 标题画面底板：照片 + 暖色纱罩（对齐选型页 mockup 的「樱花照片上浮着菜单」）。
 ## bg 没配 / 文件缺失时回退成不透明的 BG_DEEP 纯色底 ——
@@ -54,6 +58,7 @@ func _build_backdrop() -> void:
 
 func _ready() -> void:
 	_build_backdrop()
+	_build_cycle_label()
 	# 标题文字直接坐在深色底板上，不跟着 palette.text 走 ——
 	# 浅色主题里 text 是深墨色，放在深色标题底板上会看不清。
 	# 颜色单独给键（title_text / title_text_dim），换主题不用改代码。
@@ -87,3 +92,41 @@ func _ready() -> void:
 func set_save_available(available: bool) -> void:
 	_continue_button.disabled = not available
 	_load_button.disabled = not available
+
+
+# ---------------------------------------------------------------------------
+# 周目提示
+# ---------------------------------------------------------------------------
+
+## 在副标题下面挂一行周目提示。找不到 VBox（场景被改过）就安静跳过 ——
+## 这只是锦上添花的信息，不该因为它让标题界面报错。
+func _build_cycle_label() -> void:
+	var box := get_node_or_null("Center/VBox") as VBoxContainer
+	if box == null:
+		return
+	_cycle_label = Label.new()
+	_cycle_label.name = "CycleLabel"
+	_cycle_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_cycle_label.visible = false
+	UiTheme.apply_label(_cycle_label,
+		UiTheme.color("title_text_dim", UiTheme.TEXT_DIM), 22)
+	box.add_child(_cycle_label)
+	# 插到副标题后面。用副标题的实际下标算，而不是写死数字 ——
+	# 以后往 VBox 里加控件时不会把这一行挤到奇怪的位置。
+	if _subtitle_label != null and _subtitle_label.get_parent() == box:
+		box.move_child(_cycle_label, _subtitle_label.get_index() + 1)
+
+
+## main.gd 在回标题 / 关 CG 重播时调用。
+##
+## 一周目且一次都没通关 → 整行隐藏：首次游玩的玩家不该先看到「周目」这个词，
+## 那会提前剧透「这游戏要玩好几遍」。
+func set_cycle_info(cycle: int, clears: int) -> void:
+	if _cycle_label == null:
+		return
+	if cycle <= 1 and clears <= 0:
+		_cycle_label.visible = false
+		return
+	_cycle_label.visible = true
+	I18n.set_text(_cycle_label, "第 {cycle} 周目 · 已通关 {clears} 次",
+		{"cycle": cycle, "clears": clears})

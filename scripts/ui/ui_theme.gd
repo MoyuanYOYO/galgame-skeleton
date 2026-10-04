@@ -72,9 +72,19 @@ static func _defaults() -> Dictionary:
 				"pad_h": 20, "pad_v": 10, "texture": "", "texture_margin": 12},
 		},
 		"panels": {
+			# 预设名要与 data/ui/ui_theme.json 对齐 —— 这里只放几何兜底，
+			# 不写贴图路径（路径进了代码就破坏「删掉 png 自动回退」这条规矩）。
+			# 整图预设（backlog / save_load / records / gallery / cg_viewer / settings）
+			# 在 json 里是 texture_margin = 0，见那里的 _full_note。
 			"default": {"radius": 16, "border_width": 1},
+			"card": {"radius": 12, "border_width": 1},
+			"player": {"radius": 16, "border_width": 1},
+			"backlog": {"radius": 16, "border_width": 1},
+			"save_load": {"radius": 16, "border_width": 1},
+			"records": {"radius": 16, "border_width": 1},
 			"gallery": {"radius": 20, "border_width": 1},
-			"viewer": {"radius": 20, "border_width": 1},
+			"cg_viewer": {"radius": 20, "border_width": 1},
+			"settings": {"radius": 16, "border_width": 1},
 		},
 		"dialogue": {
 			"offset_left": 130, "offset_right": -130,
@@ -303,6 +313,40 @@ static func apply_panel(node: Control, preset_name: String = "default",
 	if node.has_theme_stylebox_override("panel"):
 		return
 	node.add_theme_stylebox_override("panel", panel_stylebox(preset_name, bg))
+	_watch_fullimage_fit(node, preset_name)
+
+
+## 整图预设（texture_margin = 0）的尺寸自检。
+##
+## 整图的贴图是**铺满控件**的：控件尺寸与贴图像素不等，就会被拉伸 ——
+## 而且它是**静默**的，不报错、不 warning，只有把截图放大才看得出边框变粗、
+## 圆角从正圆捏成椭圆。九宫格时代这个错误不存在（角是原样贴的），
+## 所以它是切到整图之后新增的失败模式，得配一条守卫。
+##
+## 挂在 resized 上而不是当场比：apply_panel 多在 _ready 里调用，
+## 那时布局还没跑完，node.size 还是 0。只警告一次 —— 尺寸在布局期间会变几次，
+## 每次刷屏没有意义；改完 offset 重启就能看到新结论。
+static func _watch_fullimage_fit(node: Control, preset_name: String) -> void:
+	var d := _sub_preset("panels", preset_name)
+	# -1 而不是 0：没配 texture_margin 时不该被当成整图
+	if int(d.get("texture_margin", -1)) != 0:
+		return
+	var path := String(d.get("texture", "")).strip_edges()
+	# 贴图缺失走的是程序化回退，没有「尺寸不匹配」这回事，直接放过
+	if path.is_empty() or not ResourceLoader.exists(path):
+		return
+	var texture := load(path) as Texture2D
+	if texture == null:
+		return
+	var expected := texture.get_size().floor()
+	var check := func() -> void:
+		if node.has_meta("_fullimage_warned") or node.size.is_equal_approx(expected):
+			return
+		node.set_meta("_fullimage_warned", true)
+		push_warning("[UiTheme] 面板预设 \"%s\" 的控件尺寸 %s 与整图贴图 %s 不等，会被拉伸 —— 改面板 offset，或重烘焙 %s"
+			% [preset_name, str(node.size), str(expected), path.get_file()])
+	node.resized.connect(check)
+	check.call_deferred()
 
 
 # ---------------------------------------------------------------------------

@@ -54,11 +54,18 @@ var _labels: Dictionary = {}
 var _current_file: String = ""
 var _ip: int = 0
 var _state: int = State.IDLE
+## 调用栈。每帧是 `{ip: 返回地址, params: {名字: 值}, args: [位置参数…]}`。
+##
+## ⚠️ **曾经是「int 数组」**，改成字典是为了支持 `call <标签> 名=值`。
+## 存档兼容靠 `restore_state()`：读到整数就当成「没有参数的旧帧」。
 var _call_stack: Array = []
 var _wait_end_ms: int = 0
 var _pending_choice: Array = []
 var _pending_minigame_id: String = ""
 var _stop_ip: int = -1
+
+## 演出指令里表示「要等多久」的键。`bgm` 用 `fade`，其余用 `duration`。
+const DURATION_KEYS: PackedStringArray = ["duration", "fade"]
 
 
 func _ready() -> void:
@@ -84,7 +91,16 @@ func load_script(path: String) -> bool:
 		return false
 	var text := file.get_as_text()
 	file.close()
+	return load_text(text, path)
 
+
+## 从**内存里的文本**加载剧本。
+##
+## 编辑器预览必须走这条：`load_script` 是从磁盘读的，而编辑器是**手动保存**的，
+## 手里可能有未保存改动 —— 按磁盘预览会「刚改的那句怎么没生效」，
+## 更要命的是行号对不上，`start_at_line()` 会落到别处去。
+## `path` 仍记逻辑路径（存档、章节匹配、跳转都用它）。
+func load_text(text: String, path: String) -> bool:
 	var result := GvsParser.parse(text, path.get_file())
 	if not bool(result[GvsParser.KEY_OK]):
 		parse_errors = result[GvsParser.KEY_ERRORS]
@@ -135,8 +151,41 @@ func start(label: String = "") -> void:
 	_step()
 
 
-## 剧情重播：只跑 [start_label, end_label) 这一段，跑到 end_label 就自动收尾。
-## 与 start() 的区别是带了「终点」，因此可以安全地重播某个场景而不冲进结局。
+## 从「源码第 line_no 行」对应的指令开始跑。
+##
+## 需要 `GvsParser` 给每条指令盖的 `line` 键。返回 false 表示这一行之后没有
+## 可执行指令（注释 / 空行 / 文件末尾），调用方应当退回 `start(label)`。
+##
+## ⚠️ 命中点落在某个 `choice` 的**选项行**上时，从那条 `choice` 开始 ——
+## 「从选项中间开始」没有意义，作者想看的是「这个选择点」。
+func start_at_line(line_no: int) -> bool:
+	if _commands.is_empty() or line_no <= 0:
+		return false
+	var idx := -1
+	for i in _commands.size():
+		var c: Dictionary = _commands[i]
+		if String(c.get("op", "")) == "choice":
+			for opt in c.get("options", []):
+				if int((opt as Dictionary).get("line", -1)) == line_no:
+					idx = i
+					break
+		if idx >= 0:
+			break
+		# 指令按源码顺序发出，所以「第一条 line >= line_no」就是命中点
+		if int(c.get("line", -1)) >= line_no:
+			idx = i
+			break
+	if idx < 0:
+		return false
+	_ip = idx
+	_call_stack.clear()
+	_stop_ip = -1
+	_state = State.RUNNING
+	_step()
+	return true
+
+
+## 剧情重播：只跑 [start_label, end_label) 这一段，跑到 end_label 就自动收尾。## 与 start() 的区别是带了「终点」，因此可以安全地重播某个场景而不冲进结局。
 func start_replay(file: String, start_label: String, end_label: String) -> bool:
 	if start_label.is_empty() or not load_script(file):
 		return false
@@ -286,7 +335,7 @@ func get_state() -> Dictionary:
 	return {
 		"file": _current_file,
 		"ip": ip,
-		"call_stack": _call_stack.duplicate(),
+		"call_stack": _call_stack.duplicate(true),
 	}
 
 
@@ -297,7 +346,12 @@ func restore_state(data: Dictionary) -> bool:
 	_ip = clampi(int(data.get("ip", 0)), 0, maxi(0, _commands.size() - 1))
 	_call_stack.clear()
 	for v in data.get("call_stack", []):
-		_call_stack.append(int(v))
+		# ⚠️ 兼容旧存档：`call` 带参数之前的帧只是一个整数（返回地址）。
+		# 读到时补成「没有参数的帧」，否则旧档一读就崩。
+		if typeof(v) == TYPE_DICTIONARY:
+			_call_stack.append(v)
+		elif typeof(v) == TYPE_INT or typeof(v) == TYPE_FLOAT:
+			_call_stack.append({"ip": int(v), "params": {}, "args": []})
 	_state = State.RUNNING
 	_step()
 	return true
@@ -349,6 +403,9 @@ func _execute(cmd: Dictionary) -> void:
 		"anim":
 			stage_command.emit(cmd)
 		"video":
+			# 播放的同时解锁收藏 —— 和 `cg` 指令一个道理：
+			# 「到达了会播放这段影片的剧情点」就算解锁，素材缺失也照样解锁。
+			CollectionManager.unlock("video", String(cmd.get("id", "")))
 			# wait=true 表示「播完再继续」——先把状态置成等待，再发指令。
 			# 顺序不能反：main.gd 是同步处理这条指令的，若它当场发现素材缺失
 			# 会立刻回调 submit_video_finished()，那时状态还没置上的话就漏掉了，
@@ -364,7 +421,7 @@ func _execute(cmd: Dictionary) -> void:
 			stage_command.emit(cmd)
 		"unlock":
 			CollectionManager.unlock(String(cmd.get("type", "")), String(cmd.get("id", "")))
-		"bgm", "se", "voice":
+		"bgm", "se", "voice", "audio_fx":
 			audio_command.emit(cmd)
 		"set":
 			GameManager.set_var(String(cmd["name"]), cmd.get("value"))
@@ -374,21 +431,32 @@ func _execute(cmd: Dictionary) -> void:
 			GameManager.set_flag(String(cmd["name"]), bool(cmd.get("value", true)))
 		"affection":
 			GameManager.add_affection(String(cmd["char"]), float(cmd.get("amount", 0.0)))
+		"carry":
+			# 只是打个「下周目要继承它」的标记，取值发生在抵达结局时
+			CycleManager.mark_carry(String(cmd.get("kind", "")), String(cmd.get("name", "")))
 		"jump":
 			_ip = int(cmd["target"])
 		"jump_file":
 			_exec_jump_file(cmd)
 		"call":
-			_call_stack.append(_ip)
+			# 参数随帧压栈 —— 作用域是局部的，`return` 时一并弹掉，
+			# 所以嵌套调用里的同名参数不会互相串味。
+			_call_stack.append({
+				"ip": _ip,
+				"params": cmd.get("params", {}),
+				"args": cmd.get("args", []),
+			})
 			_ip = int(cmd["target"])
 		"return":
 			if _call_stack.is_empty():
 				_end_script("", "")
 			else:
-				_ip = int(_call_stack.pop_back())
+				_ip = int((_call_stack.pop_back() as Dictionary).get("ip", 0))
 		"branch_false":
 			if not _evaluate(cmd.get("cond", {})):
 				_ip = int(cmd["target"])
+		"together":
+			_exec_together(cmd)
 		"choice":
 			_exec_choice(cmd)
 		"wait":
@@ -398,9 +466,9 @@ func _execute(cmd: Dictionary) -> void:
 		"minigame":
 			_exec_minigame(cmd)
 		"ending":
-			_end_script(String(cmd.get("id", "")), String(cmd.get("title", "")))
+			_end_script(String(cmd.get("id", "")), _resolve_text(String(cmd.get("title", ""))))
 		"chapter":
-			GameManager.chapter_title = String(cmd.get("title", ""))
+			GameManager.chapter_title = _resolve_text(String(cmd.get("title", "")))
 		_:
 			last_unknown_op = op
 			push_warning("[GVS] 未知指令: %s" % op)
@@ -408,7 +476,9 @@ func _execute(cmd: Dictionary) -> void:
 
 func _exec_say(cmd: Dictionary) -> void:
 	var speaker := String(cmd.get("speaker", ""))
-	var text := String(cmd.get("text", ""))
+	# 插值在这里做（而不是在对话框里）：这样回看记录、存档预览、已读标记
+	# 拿到的都是**替换后**的文本，不用各自再实现一遍。
+	var text := _resolve_text(String(cmd.get("text", "")))
 	var expr := String(cmd.get("expr", ""))
 	if not expr.is_empty() and not speaker.is_empty():
 		stage_command.emit({"op": "expr", "char": speaker, "expr": expr})
@@ -419,6 +489,71 @@ func _exec_say(cmd: Dictionary) -> void:
 	_state = State.WAITING_SAY
 	line_logged.emit(speaker, text)
 	say.emit(speaker, text, expr)
+
+
+## 演出并行组：块内指令一起启动，然后等**最长的那条**跑完。
+##
+## 块内指令由解析器保证都是非阻塞的（`GvsParser.TOGETHER_ALLOWED`），
+## 所以这里直接复用 `_execute` 分发，不用担心它把状态改成等待态。
+##
+## 等待时长 = 块内各指令 `duration` / `fade` 的最大值，
+## 可用 `together duration=` 覆盖（`duration=0` = 只启动、不等）。
+## 等待时长 = `together duration=`（若写了）；否则 = 块内各指令 `duration` / `fade`
+## 的最大值。**`duration=0` 是「只启动、不等」**，所以解析器用 -1 表示「没写」，
+## 这里必须区分这两者（都当 0 的话 `duration=0` 会变成「等最长的那条」，正好相反）。
+func _exec_together(cmd: Dictionary) -> void:
+	var explicit := float(cmd.get("duration", -1.0))
+	var longest := maxf(0.0, explicit)
+	for c in (cmd.get("body", []) as Array):
+		var sub: Dictionary = c
+		_execute(sub)
+		if explicit < 0.0:
+			longest = maxf(longest, _cmd_duration(sub))
+	if longest <= 0.0:
+		return
+	_wait_end_ms = Time.get_ticks_msec() + int(longest * 1000.0)
+	_state = State.WAITING_TIMER
+	set_process(true)
+
+
+## 一条演出指令「要跑多久」。取 `duration` 与 `fade` 里较大的那个 ——
+## 解析器对这两个键的映射不统一（`bg` 把 `fade=` 存成 `duration`，
+## 而 `bgm` 直接存 `fade`），这里两种都认，免得漏掉一条就等不到。
+static func _cmd_duration(cmd: Dictionary) -> float:
+	var best := 0.0
+	for key in DURATION_KEYS:
+		if cmd.has(key):
+			best = maxf(best, float(cmd[key]))
+	return best
+
+
+## 台词 / 章节名 / 结局标题的插值入口。
+##
+## 查不到的名字**原样保留**（见 `GvsInterp`），不静默变空。
+func _resolve_text(text: String) -> String:
+	return GvsInterp.resolve(text, _lookup_interp)
+
+
+## `{$名字}` 的取值顺序：命名空间（好感度 / 旗标）→ call 参数（内层优先）→ 剧本变量。
+func _lookup_interp(name: String) -> Variant:
+	if name.begins_with("affection."):
+		var cid := name.substr("affection.".length())
+		return GameManager.get_affection(cid) if not cid.is_empty() else null
+	if name.begins_with("flag."):
+		var fname := name.substr("flag.".length())
+		return GameManager.get_flag(fname) if not fname.is_empty() else null
+	# call 参数：从最内层往外找，内层同名参数遮蔽外层的
+	for i in range(_call_stack.size() - 1, -1, -1):
+		var frame: Dictionary = _call_stack[i]
+		var params: Dictionary = frame.get("params", {})
+		if params.has(name):
+			return params[name]
+		if name.is_valid_int():
+			var args: Array = frame.get("args", [])
+			var idx := name.to_int() - 1
+			if idx >= 0 and idx < args.size():
+				return args[idx]
+	return GameManager.get_var(name, null)
 
 
 func _exec_choice(cmd: Dictionary) -> void:
@@ -478,6 +613,13 @@ func _evaluate(cond: Dictionary) -> bool:
 			result = _compare(GameManager.get_affection(key), String(cond.get("cmp", "==")), cond.get("value"))
 		"var":
 			result = _compare(GameManager.get_var(key, null), String(cond.get("cmp", "==")), cond.get("value"))
+		"cycle":
+			# 当前周目数（1 起）。多周目剧本用它分岔：if cycle >= 2
+			result = _compare(CycleManager.get_cycle(), String(cond.get("cmp", "==")), cond.get("value"))
+		"cleared":
+			# 某个结局通关过没有。注意这是**跨周目**的记录 ——
+			# 二周目读它永远是 true，这正是 NG+ 剧本想要的语义。
+			result = CycleManager.has_cleared(key)
 	if bool(cond.get("negate", false)):
 		return not result
 	return result

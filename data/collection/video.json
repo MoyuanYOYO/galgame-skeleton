@@ -1,0 +1,24 @@
+{
+  "_comment": "视频收藏品注册表。id 必须与 assets/video/<id>.ogv 的文件名一致（Godot 只认 Ogg Theora）—— 剧本里 video 指令播放该段视频时会自动解锁。卡片缩略图可用 image 指定，不写就用按 id 生成的占位图。",
+
+  "items": [
+    {
+      "id": "op_movie",
+      "title": "片头动画",
+      "hint": "序章 · 开场",
+      "image": ""
+    },
+    {
+      "id": "true_end_movie",
+      "title": "真结局影片",
+      "hint": "第一章 · 真结局",
+      "image": ""
+    },
+    {
+      "id": "secret_movie",
+      "title": "？？？",
+      "hint": "隐藏 · 尚未发现",
+      "image": ""
+    }
+  ]
+}

@@ -11,6 +11,7 @@ extends Node
 ##   3. 调度器控制流（if/else、choice、call/return、flag、affection、minigame、ending）
 ##   4. 存档写入 / 读出 / 删除的往返一致性
 ##   5. 主场景与小游戏场景能否加载实例化，并把序章整条路线跑通
+##   6. 多周目：周目推进时机、carry 继承两阶段、cycle / cleared 条件求值
 
 const MAIN_SCENE := "res://scenes/main.tscn"
 const QTE_SCENE := "res://scenes/minigames/rhythm_qte.tscn"
@@ -55,6 +56,10 @@ return
 var _failed: int = 0
 var _checks: int = 0
 
+## 多周目那一节收集台词用的缓冲。理由同 _collect_say：lambda 对局部变量
+## 是按值捕获，append 到成员数组才传得出来。
+var _cycle_say_texts: Array = []
+
 ## 注意：GDScript 的 lambda 对局部变量是「按值捕获」，所以这些跨回调
 ## 收集的状态必须放在成员变量上，否则回调里的赋值传不出来。
 var _ended_id: String = ""
@@ -64,6 +69,8 @@ var _say_count: int = 0
 var _resumed_text: String = ""
 var _seen_stage_ops: Array = []
 var _seen_audio_ops: Array = []
+## 收集到的台词原文（含插值结果），按出现顺序
+var _say_texts: Array = []
 
 
 func _ready() -> void:
@@ -71,14 +78,21 @@ func _ready() -> void:
 	await get_tree().process_frame
 	print("[smoke] ==== 开始 ====")
 
-	# 测试会读写 user:// 下的真实数据（收藏记录 / 自动存档 / 设置），
+	# 测试会读写 user:// 下的真实数据（收藏记录 / 自动存档 / 设置 / 周目记录），
 	# 先备份，跑完原样还原 —— 否则跑一次测试就把玩家进度清了。
 	var auto_backup := SaveManager.read_slot(SaveManager.AUTO_SLOT)
 	var collection_backup := CollectionManager.to_dict()
 	var config_backup: Dictionary = ConfigManager.data.duplicate(true)
+	var cycle_backup := CycleManager.to_dict()
+	# 连「cycle.json 原本存不存在」也记下来：第一次跑测试时不该凭空给玩家
+	# 造出一个周目记录文件来。
+	var cycle_file_existed := FileAccess.file_exists(CycleManager.SAVE_PATH)
+	# 从干净的一周目开始 —— 否则玩家自己的通关记录会让下面的断言随机器状态漂移
+	CycleManager.reset_all()
 
 	_check_autoloads()
 	_check_parser()
+	_check_script_language()
 	_check_ui_theme()
 	_check_text_effects()
 	_check_motion_parsing()
@@ -86,10 +100,12 @@ func _ready() -> void:
 	_check_stage_polish()
 	_check_content_org()
 	_check_tooling()
+	await _check_cycle()
 	_check_runner_flow()
 	_check_save_roundtrip()
 	_check_rollback_buffer()
 	_check_audio()
+	_check_audio_comforts()
 	_check_script_paths()
 	_check_shaders()
 	_check_architecture()
@@ -105,6 +121,11 @@ func _ready() -> void:
 	CollectionManager.save_data()
 	for key in config_backup.keys():
 		ConfigManager.set_value(String(key), config_backup[key], false)
+	if cycle_file_existed:
+		CycleManager.from_dict(cycle_backup)
+		CycleManager.save_now()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(CycleManager.SAVE_PATH))
 
 	print("[smoke] ==== 结束 ====")
 	if _failed == 0:
@@ -136,13 +157,19 @@ func _collect_say(_speaker: String, text: String, _expr: String) -> void:
 	_resumed_text = text
 
 
+## 收集台词原文（用来断言插值结果 / 块的执行顺序）
+func _collect_say_text(_speaker: String, text: String, _expr: String) -> void:
+	_say_texts.append(text)
+
+
 # ---------------------------------------------------------------------------
 # 1. Autoload
 # ---------------------------------------------------------------------------
 
 func _check_autoloads() -> void:
 	print("[smoke] 1. Autoload 单例")
-	for node_name in ["ConfigManager", "GameManager", "AudioManager", "SaveManager"]:
+	for node_name in ["ConfigManager", "GameManager", "CycleManager", "AudioManager",
+			"SaveManager", "CollectionManager", "ReadTracker", "RouteTracker", "I18n"]:
 		_ok(get_tree().root.has_node(node_name), "%s 已注册" % node_name)
 
 
@@ -570,6 +597,41 @@ screen_fx swirl strength=1.6 duration=2.0
 			_ok(String(cmd.get("ease", "")) == "out_cubic",
 				"move 缺省 ease = out_cubic（不是线性）")
 
+	# --- 立绘绝对定位 / 基准缩放 ---
+	# x/y/scale 只在剧本真的写了时才进指令字典 —— 下游靠「键在不在」判断
+	# 要不要覆盖，凭空塞默认值会把 at= 预设定位搞乱。
+	var placed := GvsParser.parse(
+		"label start\nshow alice x=680 y=1130 scale=0.5\nmove bob x=400 duration=0.8",
+		"place.gvs")
+	_ok(bool(placed["ok"]), "带坐标的 show / move 解析无错误")
+	var placed_ops: Dictionary = {}
+	for c in placed["commands"]:
+		var cmd: Dictionary = c
+		placed_ops[String(cmd.get("op", ""))] = cmd
+	if placed_ops.has("show"):
+		var sh: Dictionary = placed_ops["show"]
+		_ok(sh.has("x") and is_equal_approx(float(sh["x"]), 680.0), "show x= 解析生效")
+		_ok(sh.has("y") and is_equal_approx(float(sh["y"]), 1130.0), "show y= 解析生效")
+		_ok(sh.has("scale") and is_equal_approx(float(sh["scale"]), 0.5), "show scale= 解析生效")
+	if placed_ops.has("move"):
+		var mv: Dictionary = placed_ops["move"]
+		_ok(String(mv["at"]) == "", "move 只给坐标时 at 留空（不动预设）")
+		_ok(mv.has("x") and is_equal_approx(float(mv["x"]), 400.0), "move x= 解析生效")
+		_ok(not mv.has("y"), "move 没写 y= 时不带该键")
+
+	var plain_place := GvsParser.parse("label start\nshow alice at=left", "plain_place.gvs")
+	for c in plain_place["commands"]:
+		var cmd: Dictionary = c
+		if String(cmd.get("op", "")) == "show":
+			_ok(not cmd.has("x") and not cmd.has("y") and not cmd.has("scale"),
+				"show 不写坐标时不带 x/y/scale 键")
+
+	var legacy_move := GvsParser.parse("label start\nmove alice center", "legacy_move.gvs")
+	for c in legacy_move["commands"]:
+		var cmd: Dictionary = c
+		if String(cmd.get("op", "")) == "move":
+			_ok(String(cmd.get("at", "")) == "center", "move 位置关键字写法保持兼容")
+
 	_ok(Stage.known_eases().size() >= 8, "内置缓动预设 %d 个" % Stage.known_eases().size())
 
 
@@ -970,6 +1032,209 @@ ending dup_end "结局乙"
 
 
 # ---------------------------------------------------------------------------
+# 30. 多周目（周目计数 / 通关记录 / carry 继承 / cycle·cleared 条件）
+#
+# 这一节要守住的三类静默失效：
+#   · 周目数推进的时机错了 —— 抵达结局那一刻就 +1，玩家会看到「第 2 周目」的
+#     结局演出；或者永远不推进，NG+ 内容一辈子看不到
+#   · carry 取值的时机错了 —— 在开新周目时取值，那时 reset_run() 已经跑过，
+#     取到的全是空，表现为「继承系统存在但什么都没继承」
+#   · cycle / cleared 条件解析成功却没人求值 —— 和「解析器认识、调度器不转发」
+#     同一类问题，剧本写了 NG+ 分支但永远走不到
+# ---------------------------------------------------------------------------
+
+const CYCLE_SCRIPT_PATH := "user://__smoke_cycle.gvs"
+
+
+func _collect_cycle_say(_speaker: String, text: String, _expr: String) -> void:
+	_cycle_say_texts.append(text)
+
+
+func _check_cycle() -> void:
+	print("[smoke] 30. 多周目")
+
+	# 从干净状态开始（玩家真实的 cycle.json 已在 _ready 里备份）
+	CycleManager.reset_all()
+
+	# --- 初始状态 ---
+	_ok(CycleManager.get_cycle() == 1, "初始是第 1 周目")
+	_ok(not CycleManager.is_ng_plus(), "一周目不算 NG+")
+	_ok(CycleManager.total_clears() == 0 and CycleManager.distinct_clears() == 0,
+		"初始没有通关记录")
+	_ok(not CycleManager.has_cleared("true_end"), "has_cleared 对没通关的结局返回 false")
+	_ok(CycleManager.clear_count("true_end") == 0, "clear_count 对没通关的结局返回 0")
+	_ok(not CycleManager.has_inherited(), "初始没有继承数据")
+	_ok(CycleManager.clear_summary().is_empty(), "初始通关摘要为空")
+
+	# --- 通关记录 ---
+	CycleManager.record_ending("true_end")
+	_ok(CycleManager.has_cleared("true_end"), "抵达结局后记为已通关")
+	_ok(CycleManager.clear_count("true_end") == 1, "通关次数 +1")
+	_ok(CycleManager.total_clears() == 1, "总通关次数 +1")
+	_ok(CycleManager.is_advance_pending(), "通关后挂起「待进入下一周目」")
+	_ok(CycleManager.get_cycle() == 1,
+		"抵达结局那一刻周目数不变（玩家还在第 1 周目里看结局演出）")
+	CycleManager.record_ending("true_end")
+	_ok(CycleManager.clear_count("true_end") == 2, "同一个结局再抵达一次，计数继续累加")
+	CycleManager.record_ending("bad")
+	_ok(CycleManager.distinct_clears() == 2, "distinct_clears 数的是不同结局")
+	var summary := CycleManager.clear_summary()
+	_ok(summary.size() == 2 and String((summary[0] as Dictionary).get("id", "")) == "true_end",
+		"通关摘要按首次抵达顺序排列（%s）" % str(summary))
+
+	# --- carry 继承：两阶段（打标记 → 通关取值 → 新周目写回）---
+	GameManager.reset_run()
+	GameManager.set_affection("alice", 42)
+	GameManager.set_var("hp", 7)
+	GameManager.set_flag("saw_true")
+	CycleManager.clear_carry_marks()
+	CycleManager.mark_carry("affection", "alice")
+	CycleManager.mark_carry("var", "hp")
+	CycleManager.mark_carry("flag", "saw_true")
+	_ok(CycleManager.carry_marks().size() == 3, "三个 carry 标记都记下了")
+	CycleManager.mark_carry("affection", "alice")
+	_ok(CycleManager.carry_marks().size() == 3, "重复标记同一个键不会变成两条")
+	CycleManager.mark_carry("不存在的类型", "x")
+	_ok(CycleManager.carry_marks().size() == 3, "未知类型被忽略")
+	_ok(not CycleManager.has_inherited(), "只打标记时还没有继承数据（取值在通关那一刻）")
+
+	CycleManager.record_ending("normal")
+	_ok(CycleManager.has_inherited(), "通关时把标记过的状态快照了下来")
+	var inherited := CycleManager.inherited_summary()
+	_ok(inherited.has("affection") and inherited.has("var") and inherited.has("flag"),
+		"三类继承数据都在（%s）" % str(inherited.keys()))
+	_ok(is_equal_approx(float((inherited["affection"] as Dictionary).get("alice", 0.0)), 42.0),
+		"快照的是通关那一刻的值（alice=42）")
+
+	# 模拟「开新游戏」：先 reset_run() 再 begin_new_run()
+	GameManager.reset_run()
+	_ok(is_equal_approx(GameManager.get_affection("alice"), 0.0), "reset_run 清空了软状态")
+	var cycle := CycleManager.begin_new_run(true)
+	_ok(cycle == 2, "开新周目后周目数 +1（第 %d 周目）" % cycle)
+	_ok(CycleManager.is_ng_plus(), "第 2 周目算 NG+")
+	_ok(not CycleManager.is_advance_pending(), "进入新周目后挂起标记被清掉")
+	_ok(is_equal_approx(GameManager.get_affection("alice"), 42.0), "好感度继承到新周目")
+	_ok(int(GameManager.get_var("hp", 0)) == 7, "变量继承到新周目（且仍是 int）")
+	_ok(GameManager.get_flag("saw_true"), "旗标继承到新周目")
+	_ok(CycleManager.carry_marks().is_empty(), "开新周目时清空了上一周目的 carry 标记")
+
+	# 推进时机：没有新通关不该白送周目；章节选择（advance=false）也不推进
+	_ok(CycleManager.begin_new_run(true) == 2, "没有新通关时重复开新游戏不推进周目")
+	CycleManager.record_ending("bad")
+	_ok(CycleManager.has_inherited(),
+		"本周目没声明 carry 时，上一周目的继承数据保持不动（不被悄悄清空）")
+	_ok(CycleManager.begin_new_run(false) == 2, "章节选择（advance=false）不推进周目")
+	_ok(CycleManager.is_advance_pending(), "章节选择也不消费挂起标记")
+	_ok(CycleManager.begin_new_run(true) == 3, "之后「开始游戏」仍能推进到第 3 周目")
+
+	# --- 存档字段：只带周目数与挂起标记 ---
+	var save_dict := CycleManager.to_save_dict()
+	_ok(save_dict.has("cycle") and save_dict.has("advance_pending"),
+		"to_save_dict 带周目数与挂起标记")
+	_ok(not save_dict.has("clears") and not save_dict.has("inherited"),
+		"存档里不带通关记录与继承数据（那是这台机器的长期记忆）")
+	var clears_before := CycleManager.total_clears()
+	CycleManager.from_save_dict({"cycle": 5, "advance_pending": false})
+	_ok(CycleManager.get_cycle() == 5, "from_save_dict 能还原周目数")
+	_ok(CycleManager.total_clears() == clears_before,
+		"from_save_dict 不碰通关记录（仍是 %d 次）" % clears_before)
+	_ok(not CycleManager.is_advance_pending(), "from_save_dict 也还原挂起标记")
+	CycleManager.from_save_dict({})
+	_ok(CycleManager.get_cycle() == 5, "空字典不改变现状（旧存档没有 cycle 字段时不翻车）")
+
+	# --- 解析：cycle / cleared 条件 ---
+	var parsed := GvsParser.parse(
+		"label start\nif cycle >= 2\n    narr a\nend\nif cleared true_end\n    narr b\nend\n"
+		+ "if not cleared bad\n    narr c\nend\nending cyc_end \"周目\"\n", "cyc.gvs")
+	_ok(bool(parsed["ok"]), "cycle / cleared 条件能被解析")
+	var kinds := {}
+	var negated := 0
+	for c in parsed["commands"]:
+		var cmd: Dictionary = c
+		if String(cmd.get("op", "")) != "branch_false":
+			continue
+		var cond: Dictionary = cmd.get("cond", {})
+		kinds[String(cond.get("kind", ""))] = true
+		if bool(cond.get("negate", false)):
+			negated += 1
+	_ok(kinds.has("cycle") and kinds.has("cleared"), "条件种类被识别为 cycle / cleared")
+	_ok(negated == 1, "not cleared 的取反被记下来（%d 个）" % negated)
+
+	# --- 调度器真的会走这两条分支 ---
+	CycleManager.reset_all()
+	var handle := FileAccess.open(CYCLE_SCRIPT_PATH, FileAccess.WRITE)
+	handle.store_string("""label start
+if cycle >= 2
+    narr 二周目独有
+else
+    narr 一周目独有
+end
+if cleared true_end
+    narr 记得真结局
+end
+if not cleared bad
+    narr 还没走过坏结局
+end
+ending cyc_end "周目测试"
+""")
+	handle.close()
+
+	var probe := ScriptRunner.new()
+	add_child(probe)
+	probe.say.connect(_collect_cycle_say)
+	_ok(probe.load_script(CYCLE_SCRIPT_PATH), "多周目测试剧本可加载")
+
+	_cycle_say_texts.clear()
+	probe.start()
+	await _drive_to_end(probe)
+	_ok(_cycle_say_texts.has("一周目独有") and not _cycle_say_texts.has("二周目独有"),
+		"一周目走 else 分支（%s）" % str(_cycle_say_texts))
+	_ok(not _cycle_say_texts.has("记得真结局"), "没通关过时 cleared 为假")
+	_ok(_cycle_say_texts.has("还没走过坏结局"), "not cleared 为真")
+
+	CycleManager.record_ending("true_end")
+	CycleManager.begin_new_run(true)
+	_cycle_say_texts.clear()
+	probe.start()
+	await _drive_to_end(probe)
+	_ok(_cycle_say_texts.has("二周目独有") and not _cycle_say_texts.has("一周目独有"),
+		"二周目走 cycle>=2 分支（%s）" % str(_cycle_say_texts))
+	_ok(_cycle_say_texts.has("记得真结局"), "通关过 true_end 后 cleared 命中")
+	_ok(_cycle_say_texts.has("还没走过坏结局"),
+		"not cleared 对**没**通关过的结局仍为真（这一周目只通了 true_end）")
+
+	probe.queue_free()
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(CYCLE_SCRIPT_PATH))
+
+	# --- 落盘往返：写出去再读回来，周目与继承数据都得原样 ---
+	# 先让继承数据非空 —— 空字典往返是测不出问题的
+	GameManager.set_affection("alice", 33)
+	CycleManager.clear_carry_marks()
+	CycleManager.mark_carry("affection", "alice")
+	CycleManager.record_ending("bad")
+	_ok(CycleManager.has_inherited(), "重新标记并通关后继承数据非空")
+
+	var dump := CycleManager.to_dict()
+	CycleManager.reset_all()
+	_ok(CycleManager.get_cycle() == 1 and not CycleManager.has_inherited(),
+		"reset_all 清空了周目记录与继承数据")
+	CycleManager.from_dict(dump)
+	_ok(CycleManager.get_cycle() == int(dump["cycle"]), "落盘往返：周目数一致")
+	_ok(CycleManager.total_clears() == int(dump["total_clears"]), "落盘往返：通关次数一致")
+	_ok(CycleManager.clear_summary().size() == (dump["clear_order"] as Array).size(),
+		"落盘往返：通关摘要条数一致")
+	_ok(CycleManager.inherited_summary().size() == (dump["inherited"] as Dictionary).size(),
+		"落盘往返：继承数据种类一致")
+	_ok(is_equal_approx(float((CycleManager.inherited_summary()["affection"] as Dictionary)
+		.get("alice", 0.0)), 33.0), "落盘往返：继承值一致（alice=33）")
+
+	# 收尾回到干净的一周目 —— 后面的场景测试不该被这一节的记录影响
+	CycleManager.reset_all()
+	_ok(CycleManager.get_cycle() == 1 and CycleManager.total_clears() == 0,
+		"收尾：回到干净的一周目")
+
+
+# ---------------------------------------------------------------------------
 # 3. 调度器控制流
 # ---------------------------------------------------------------------------
 
@@ -1056,6 +1321,8 @@ func _check_save_roundtrip() -> void:
 		"runner": {"file": TEST_SCRIPT_PATH, "ip": 3, "call_stack": []},
 		"stage": {"bg": "classroom", "chars": [{"char": "alice", "expr": "smile", "at": "left"}]},
 		"backlog": [{"speaker": "爱丽丝", "text": "测试文本"}],
+		# 跨周目字段只有这一个（见 CycleManager.to_save_dict）
+		"cycle": {"cycle": 3, "advance_pending": true},
 	}
 
 	_ok(SaveManager.write_slot(slot, payload), "写入槽位 %d" % slot)
@@ -1069,6 +1336,16 @@ func _check_save_roundtrip() -> void:
 	var loaded := SaveManager.read_slot(slot)
 	_ok(String(loaded.get("preview", "")) == "测试文本", "读回文本一致")
 	_ok(int((loaded.get("runner") as Dictionary).get("ip", -1)) == 3, "读回指令指针一致")
+
+	# 跨周目字段随存档往返，且只带周目数与挂起标记
+	var loaded_cycle: Variant = loaded.get("cycle", {})
+	_ok(typeof(loaded_cycle) == TYPE_DICTIONARY
+			and int((loaded_cycle as Dictionary).get("cycle", 0)) == 3,
+		"读回当前周目一致（%s）" % str(loaded_cycle))
+	var cycle_probe := CycleManager.get_cycle()
+	CycleManager.from_save_dict(loaded_cycle)
+	_ok(CycleManager.get_cycle() == 3, "from_save_dict 还原周目数")
+	CycleManager.force_cycle(cycle_probe)
 
 	GameManager.from_dict(loaded.get("game", {}))
 	_ok(GameManager.get_flag("met_alice"), "读档后旗标恢复")
@@ -1323,6 +1600,67 @@ func _check_scenes() -> void:
 		"off_right 立绘整体在屏幕右侧外（x=%.0f ≥ 画布 %.0f）"
 			% [off_r.x, Stage.DESIGN.x])
 
+	# --- 绝对定位 / 基准缩放：x= 框中心、y= 脚底、scale= 基准缩放 ---
+	stage_node.hide_char("alice", "none", 0.0)
+	stage_node.show_char("alice", "normal", "center", "none", 0.0,
+		{"x": 680.0, "y": 1130.0, "scale": 0.5})
+	var abs_pos := stage_node.get_char_position("alice")
+	_ok(is_equal_approx(abs_pos.x + Stage.CHAR_WIDTH * 0.5, 680.0),
+		"show x= 把框中心放到 680（实测 %.0f）"
+			% (abs_pos.x + Stage.CHAR_WIDTH * 0.5))
+	_ok(is_equal_approx(abs_pos.y + Stage.CHAR_HEIGHT, 1130.0),
+		"show y= 把脚底放到 1130（实测 %.0f）"
+			% (abs_pos.y + Stage.CHAR_HEIGHT))
+	_ok(is_equal_approx(stage_node.get_char_base_scale("alice"), 0.5),
+		"show scale= 设了基准缩放（%.2f）" % stage_node.get_char_base_scale("alice"))
+	_ok(is_equal_approx(stage_node.get_char_scale("alice"), 0.5),
+		"基准缩放落到 rect 上（%.2f）" % stage_node.get_char_scale("alice"))
+
+	# 基准缩放与动画缩放相乘 —— zoom 之上不该把 base 抹掉
+	stage_node.char_zoom("alice", 2.0, 0.0)
+	_ok(is_equal_approx(stage_node.get_char_scale("alice"), 1.0),
+		"zoom 乘在基准缩放之上（0.5 × 2.0 = %.2f）" % stage_node.get_char_scale("alice"))
+	stage_node.char_zoom("alice", 1.0, 0.0)
+
+	# 不写 x/y/scale 时要回到预设与默认，而不是沿用上一次的覆盖
+	stage_node.show_char("alice", "normal", "left", "none", 0.0)
+	var reset_pos := stage_node.get_char_position("alice")
+	_ok(is_equal_approx(reset_pos.x, Stage.anchor_x("left") - Stage.CHAR_WIDTH * 0.5),
+		"不写 x= 时回到 at 预设（x=%.0f）" % reset_pos.x)
+	_ok(is_equal_approx(reset_pos.y + Stage.CHAR_HEIGHT, Stage.DESIGN.y + 50.0),
+		"不写 y= 时回到默认脚底线")
+	_ok(is_equal_approx(stage_node.get_char_base_scale("alice"), 1.0),
+		"不写 scale= 时基准缩放回到 1.0")
+
+	# --- 站位与缩放要能进存档 ---
+	stage_node.show_char("alice", "normal", "center", "none", 0.0,
+		{"x": 700.0, "y": 1050.0, "scale": 0.75})
+	var placement_state := stage_node.get_state()
+	var saved_char: Dictionary = {}
+	for c in placement_state["chars"]:
+		if String((c as Dictionary).get("char", "")) == "alice":
+			saved_char = c
+	_ok(saved_char.has("x") and is_equal_approx(float(saved_char.get("x", 0.0)), 700.0),
+		"get_state 带上了 x")
+	_ok(saved_char.has("y") and is_equal_approx(float(saved_char.get("y", 0.0)), 1050.0),
+		"get_state 带上了 y")
+	_ok(saved_char.has("scale") and is_equal_approx(float(saved_char.get("scale", 0.0)), 0.75),
+		"get_state 带上了 scale")
+	stage_node.restore_state(placement_state)
+	_ok(is_equal_approx(stage_node.get_char_position("alice").x, 700.0 - Stage.CHAR_WIDTH * 0.5),
+		"restore_state 还原 x")
+	_ok(is_equal_approx(stage_node.get_char_position("alice").y, 1050.0 - Stage.CHAR_HEIGHT),
+		"restore_state 还原 y")
+	_ok(is_equal_approx(stage_node.get_char_base_scale("alice"), 0.75),
+		"restore_state 还原 scale")
+
+	# 只用预设的角色不该往存档里塞坐标键 —— NAN 不能进 JSON
+	stage_node.clear()
+	stage_node.show_char("alice", "normal", "left", "none", 0.0)
+	var plain_char: Dictionary = (stage_node.get_state()["chars"] as Array)[0]
+	_ok(not plain_char.has("x") and not plain_char.has("y") and not plain_char.has("scale"),
+		"只用预设时存档不带坐标键（NAN 不能进 JSON）")
+
 	# --- 天气 ---
 	_ok(stage_node.get_weather().is_empty(), "初始没有天气")
 	stage_node.set_weather("snow", 1.0)
@@ -1453,9 +1791,24 @@ func _check_scenes() -> void:
 	_ok(String(GameManager.chapter_title) == "第一章 · 春日的答案",
 		"chapter 指令设置了章节名（%s）" % GameManager.chapter_title)
 
+	# --- 多周目接线：结局要真的记进 CycleManager，存档要带上当前周目 ---
+	_ok(CycleManager.has_cleared("true_end"),
+		"结局经 main._on_script_ended 记进了 CycleManager（接线没漏）")
+	_ok(CycleManager.is_advance_pending(), "通关后挂起了「待进入下一周目」")
+	var payload := main_node.call("_build_payload") as Dictionary
+	var payload_cycle: Variant = payload.get("cycle", {})
+	_ok(typeof(payload_cycle) == TYPE_DICTIONARY
+			and int((payload_cycle as Dictionary).get("cycle", 0)) == 1,
+		"存档 payload 带上了当前周目（%s）" % str(payload_cycle))
+	# 后面的子测试（自动播放 / 回滚 / 标题读档…）都假定「一周目 + 无通关记录」。
+	# 这里把刚才那条通关记录清掉 —— 留着的话它会推进周目、并在下次
+	# 「开始游戏」时把继承数据写进 GameManager，把那些测试搅浑。
+	CycleManager.reset_all()
+
 	await _check_auto_advance(main_node, runner)
 	await _check_title_load(main_node, runner)
 	_check_continue_precision(main_node, runner)
+	await _check_new_features(main_node, runner)
 	await _check_gallery(main_node, runner)
 	await _check_real_input(main_node, runner)
 	await _check_op_coverage()
@@ -1603,8 +1956,16 @@ func _check_gallery(main_node: Node, runner: ScriptRunner) -> void:
 	_ok(GalleryTheme.count("columns", 0) > 0, "主题列数 = %d" % GalleryTheme.count("columns", 0))
 	_ok(GalleryTheme.color("accent").a > 0.5, "主题配色可解析")
 	_ok(GalleryTheme.label("locked_label", "") == "???", "主题文案 locked_label = ???")
-	_ok(not GalleryTheme.visualizer_mode().is_empty(),
-		"可视化模式 = %s" % GalleryTheme.visualizer_mode())
+	# 播放模式与停止键的文案由主题配置提供（可调，不用改代码）
+	var mode_keys := ["mode_list_loop", "mode_single_loop", "mode_shuffle", "mode_once"]
+	var missing_labels := 0
+	for key in mode_keys:
+		if GalleryTheme.label(key, "").is_empty():
+			missing_labels += 1
+	_ok(missing_labels == 0,
+		"循环模式文案齐全（%d 档，缺 %d）" % [mode_keys.size(), missing_labels])
+	_ok(not GalleryTheme.label("stop_button", "").is_empty(),
+		"停止键文案 = %s" % GalleryTheme.label("stop_button", ""))
 
 	# --- 解锁语义 ---
 	CollectionManager.reset_all()
@@ -1657,18 +2018,24 @@ func _check_gallery(main_node: Node, runner: ScriptRunner) -> void:
 	main_node.call("_on_cg_activated", "cg_secret_01")
 	_ok(not cg_viewer.has_replay(), "未配置 replay 的 CG 会置灰重播按钮")
 
-	# --- 详情页的留白 ---
-	# 这个面板的 stylebox 是自己拼的（没走 apply_panel 预设），内边距曾经传 0 ——
-	# CG 图、标题文字和按钮会全部顶到边框上。
+	# --- 详情页的留白与样式来源 ---
+	# 内边距来自 panels.cg_viewer 预设，跟别的功能窗口同一个来源。
+	# 历史上这里自己拼 stylebox 且传 0，CG 图 / 标题 / 按钮全顶到边框上。
 	var viewer_panel := cg_viewer.get_node("Panel") as PanelContainer
 	var viewer_sb := viewer_panel.get_theme_stylebox("panel")
+	var viewer_preset := UiTheme.panel_stylebox("cg_viewer")
 	_ok(viewer_sb.content_margin_left > 0.0 and viewer_sb.content_margin_right > 0.0
 		and viewer_sb.content_margin_top > 0.0 and viewer_sb.content_margin_bottom > 0.0,
 		"CG 详情页面板有内边距（左 %.0f / 上 %.0f），内容不顶边框"
 		% [viewer_sb.content_margin_left, viewer_sb.content_margin_top])
-	_ok(GalleryTheme.count("viewer_pad_h", 0) > 0
-		and GalleryTheme.count("viewer_pad_v", 0) > 0,
-		"详情页的内边距在主题配置里（可调，不用改代码）")
+	# 守「样式只有一条路径」：面板上的 stylebox 必须与预设同源。
+	# 手拼 stylebox 那次，面板被换成程序化圆角的同时也把贴图挡在门外 ——
+	# 类型对不上正好抓这个。注意不能断言「一定是贴图」：删掉 png 属受支持的回退，
+	# 那时两边一起退回 StyleBoxFlat，这条依然成立。
+	_ok(viewer_sb.get_class() == viewer_preset.get_class(),
+		"CG 详情页样式与 panels.cg_viewer 预设同源（%s）" % viewer_sb.get_class())
+	_ok(viewer_preset.content_margin_left > 0.0 and viewer_preset.content_margin_top > 0.0,
+		"详情页的内边距在 ui_theme.json 的 panels.cg_viewer 里（可调，不用改代码）")
 
 	# --- 音乐面板 ---
 	gallery.show_tab(GalleryPanel.TAB_MUSIC)
@@ -1708,10 +2075,113 @@ func _check_gallery(main_node: Node, runner: ScriptRunner) -> void:
 			highlighted += 1
 	_ok(highlighted == 1, "恰好有一项被高亮（%d）" % highlighted)
 
-	# --- 唱片 / 频谱控件已生成 ---
-	var visualizer_host := main_node.get_node("%VisualizerHost") as Control
-	_ok(_count_visualizer_nodes(visualizer_host) > 0,
-		"可视化控件已按主题配置生成（模式 %s）" % GalleryTheme.visualizer_mode())
+	# --- 播放器控件：进度条 / 停止 / 循环模式 ---
+	# 唱片与频谱已经拿掉，这里守的是「换上去的那套控制件确实在、并且真的接线了」。
+	var visualizer_host := main_node.get_node_or_null("%VisualizerHost")
+	_ok(visualizer_host == null,
+		"可视化宿主节点已从场景里移除（唱片 / 频谱不再存在）")
+	var progress := main_node.get_node("%Progress") as HSlider
+	_ok(progress != null and progress.max_value > 0.0,
+		"进度条存在且量程有效（max=%.1f）" % progress.max_value)
+	var stop_btn := main_node.get_node("%MusicStop") as Button
+	var mode_btn := main_node.get_node("%MusicMode") as Button
+	_ok(stop_btn != null and mode_btn != null, "停止键与播放模式键存在")
+
+	# 进度条跳转：直接把 value 改掉（等价于玩家拖到那个位置）
+	var target_pos := minf(10.0, AudioManager.get_bgm_length() * 0.5)
+	progress.value = target_pos
+	await _wait(0.25)
+	_ok(absf(AudioManager.get_bgm_position() - target_pos) < 1.5,
+		"拖进度条能跳到指定位置（期望 %.1fs，实际 %.1fs）"
+		% [target_pos, AudioManager.get_bgm_position()])
+
+	# 暂停 / 恢复。这两个动作曾经是坏的：AudioStreamPlayer.playing 在
+	# stream_paused = true 时会读回 false，于是「暂停中」被误判成「没在播」，
+	# resume 又拿 playing 当守卫直接把自己挡掉 —— 点一次暂停，音乐就再也回不来。
+	AudioManager.resume_bgm()
+	await _wait(0.15)
+	var pos_before_pause := AudioManager.get_bgm_position()
+	main_node.call("_on_music_track_selected", first_unlocked)
+	await _wait(0.2)
+	var music_panel := main_node.get_node("%MusicRoot") as MusicPanel
+	main_node.get_node("%MusicPlay").pressed.emit()
+	await _wait(0.2)
+	_ok(AudioManager.is_bgm_paused(), "点播放键会暂停（而不是停止）")
+	_ok(not AudioManager.is_bgm_audible(), "暂停时不再出声")
+	_ok(AudioManager.get_bgm_id() == first_unlocked, "暂停不会丢掉当前曲目")
+	_ok(AudioManager.get_bgm_position() > 0.0,
+		"暂停保留播放位置（%.2fs），不归零" % AudioManager.get_bgm_position())
+
+	var pos_paused := AudioManager.get_bgm_position()
+	await _wait(0.4)
+	_ok(absf(AudioManager.get_bgm_position() - pos_paused) < 0.05,
+		"暂停期间位置冻结（%.3f → %.3f）" % [pos_paused, AudioManager.get_bgm_position()])
+
+	main_node.get_node("%MusicPlay").pressed.emit()
+	await _wait(0.3)
+	_ok(not AudioManager.is_bgm_paused(), "再点一次能恢复（曾经永远卡在暂停）")
+	_ok(AudioManager.is_bgm_audible(), "恢复后重新出声")
+	_ok(AudioManager.get_bgm_position() > pos_paused,
+		"恢复是从暂停处接着走，不是从头（%.2f → %.2f）"
+		% [pos_paused, AudioManager.get_bgm_position()])
+
+	# 停止键：清空曲目，回到「未在播放」
+	main_node.get_node("%MusicStop").pressed.emit()
+	await _wait(0.3)
+	_ok(AudioManager.get_bgm_id().is_empty(), "停止键会清掉当前曲目")
+	_ok(not AudioManager.is_bgm_paused(), "停止不留暂停标记")
+	_ok(stop_btn.disabled, "没有曲目时停止键置灰")
+
+	# 循环模式：点一下顺时针切一档，切满一轮回到起点
+	var mode_count := MusicPanel.PlayMode.size()
+	var first_mode := music_panel.get_play_mode()
+	var cycled: Array[int] = [first_mode]
+	for i in mode_count:
+		mode_btn.pressed.emit()
+		cycled.append(music_panel.get_play_mode())
+	_ok(cycled.size() == mode_count + 1 and cycled[0] == cycled[mode_count],
+		"播放模式共 %d 档，点满一轮回到起点（%s）" % [mode_count, str(cycled)])
+
+	# --- 放完一曲之后的自动切歌 ---
+	# 两个真实踩过的坑，各配一条守卫：
+	#   1. 引擎在切流后一帧会**补报**一次 finished，据此切歌就会连跳两首
+	#      （现象：列表循环放完「主题曲」直接落到「终曲」，中间那首被吃掉）
+	#   2. 在 finished 回调里同步换流，**WAV 那首起不来**
+	#      （现象：切过去后 playing 恒 false、位置停在 0）
+	# 用 seek 跳到末尾来加速，不然要真等四十多秒。
+	# 素材缺失时明确跳过 —— 不让「环境不满足」伪装成「功能坏了」。
+	music_panel.set_play_mode(MusicPanel.PlayMode.LIST_LOOP)
+	main_node.call("_on_music_track_selected", "theme")
+	await _wait(0.4)
+	if AudioManager.get_bgm_length() <= 2.0:
+		print("   SKIP  音频素材缺失，「放完一曲」的切歌无法验证")
+	else:
+		CollectionManager.unlock("music", "tension")
+		CollectionManager.unlock("music", "ending_theme")
+
+		AudioManager.seek_bgm(AudioManager.get_bgm_length() - 0.8)
+		await _wait(1.8)
+		_ok(AudioManager.get_bgm_id() == "tension" and AudioManager.is_bgm_audible(),
+			"列表循环：放完一首只前进一首，且真的在放（实际 %s / playing=%s）"
+			% [AudioManager.get_bgm_id(), str(AudioManager._bgm_player.playing)])
+
+		music_panel.set_play_mode(MusicPanel.PlayMode.ONCE)
+		main_node.call("_on_music_track_selected", "theme")
+		await _wait(0.4)
+		AudioManager.seek_bgm(AudioManager.get_bgm_length() - 0.8)
+		await _wait(1.8)
+		_ok(AudioManager.get_bgm_id() == "tension",
+			"顺序播放：放完一首继续往下放，不是直接停（实际 %s）"
+			% AudioManager.get_bgm_id())
+
+		main_node.call("_on_music_track_selected", "ending_theme")
+		await _wait(0.4)
+		AudioManager.seek_bgm(AudioManager.get_bgm_length() - 0.8)
+		await _wait(1.8)
+		_ok(AudioManager.get_bgm_id().is_empty(),
+			"顺序播放放完最后一首才收尾（实际 id=%s）" % AudioManager.get_bgm_id())
+
+	music_panel.set_play_mode(MusicPanel.PlayMode.LIST_LOOP)
 
 	# --- 剧情重播 ---
 	CollectionManager.unlock("cg", "cg_rooftop")
@@ -1780,15 +2250,6 @@ func _count_nodes_of_type(node: Node, type_name: String) -> int:
 	return total
 
 
-func _count_visualizer_nodes(node: Node) -> int:
-	var total := 0
-	for child in node.get_children():
-		if child is RecordDisc or child is SpectrumBars:
-			total += 1
-		total += _count_visualizer_nodes(child)
-	return total
-
-
 # ---------------------------------------------------------------------------
 # 8. 「继续游戏」的恢复精度
 #
@@ -1809,7 +2270,12 @@ func _check_continue_precision(main_node: Node, runner: ScriptRunner) -> void:
 	runner.start()
 
 	# 推到第一个选项并选择（这一步本身就会触发一次自动存档）
-	var guard := 80
+	#
+	# ⚠️ 上限别掐太紧。每句对白要两次点击（第一次跳到停顿点 / 补完，第二次推进），
+	# 而**带 `[wait]` 停顿的句子要多一次** —— 这就是「点击跳到下一个停顿处」的
+	# 行为本身（实测序章到第一个选项要 82 次点击，旧的 80 上限刚好被顶破）。
+	# 这个数字只是「别死循环」的安全绳，不是被测行为。
+	var guard := 200
 	while not runner.is_waiting_choice() and guard > 0:
 		guard -= 1
 		main_node.call("_on_advance_requested")
@@ -2033,6 +2499,7 @@ const OP_SAMPLES: Dictionary = {
 	"bgm": {"line": "bgm daily", "expect": "audio"},
 	"se": {"line": "se bell", "expect": "audio"},
 	"voice": {"line": "voice alice_001", "expect": "audio"},
+	"audio_fx": {"line": "audio_fx bgm glitch duration=0.5", "expect": "audio"},
 	"wait": {"line": "wait 0.01", "expect": ""},
 	"wait_click": {"line": "wait_click", "expect": ""},
 	"pause": {"line": "pause", "expect": ""},
@@ -2041,11 +2508,15 @@ const OP_SAMPLES: Dictionary = {
 	"sub": {"line": "sub var x 1", "expect": ""},
 	"flag": {"line": "flag f1", "expect": ""},
 	"affection": {"line": "affection alice 5", "expect": ""},
+	"carry": {"line": "carry affection alice", "expect": ""},
 	"if": {"line": "if flag f1\n    narr y\nend", "expect": ""},
 	"elif": {"line": "if flag f1\n    narr y\nelif flag f2\n    narr n\nend", "expect": ""},
 	"else": {"line": "if flag f1\n    narr y\nelse\n    narr n\nend", "expect": ""},
 	"end": {"line": "if flag f1\n    narr y\nend", "expect": ""},
 	"choice": {"line": "choice\n    \"A\" -> t1\nend\nlabel t1", "expect": ""},
+	# together 的「转发」由第 32 节专门断言（它转发的是块内的子指令，
+	# 不是 `together` 自己），这里只保证调度器认识它。
+	"together": {"line": "together\n    bg classroom\nend", "expect": ""},
 	"minigame": {"line": "minigame rhythm_qte rounds=1 need=1", "expect": ""},
 	"ending": {"line": "", "expect": ""},
 	"chapter": {"line": "chapter 测试章", "expect": ""},
@@ -2461,13 +2932,17 @@ func _check_shaders() -> void:
 			_ok(false, "%s 在 %s 里用了 return（Godot 着色语言不允许，会编译失败）"
 				% [file_name, ", ".join(offenders)])
 
-	# --- modulate 守卫：给 COLOR 赋值时**不要**乘进来的 COLOR。
-	#     节点 modulate（focus_speaker 改的 modulate.rgb、淡入淡出改的
-	#     modulate.a）由引擎在 fragment 之后叠加；在 shader 里再乘一遍等于
-	#     叠加两次 —— char_expr 会整张立绘暗掉约 40%（一挂材质就永久变暗），
-	#     transition 会把转场中的那一层压暗约 35%（转场时发暗发红，结束才恢复）。
-	#     这两个都是像素级才能发现的坑，逻辑测试只会全绿。
-	#     实测依据见 tools/char_shader_probe.gd 与 tools/mask_fidelity_probe.gd。
+	# --- modulate 守卫 ---
+	# canvas_item 的 fragment 里，进来的 COLOR **已经等于「贴图 × 顶点色」**
+	# （顶点色 = modulate × self_modulate × 各级父节点）。于是有两种写法会坏，
+	# 而两种都只有逐像素量渲染色才发现得了 —— modulate 属性本身一直是对的，
+	# 逻辑测试读属性全绿：
+	#   1) COLOR = ... * COLOR  → 顶点色叠两遍，整层恒暗约 40%（一挂材质就变深）；
+	#   2) COLOR = texture(...) → 顶点色被丢掉，modulate 彻底失效。
+	#      表现就是「换过一次表情的立绘之后再也不变暗」（focus_speaker 压暗、
+	#      淡入淡出一起失灵）——女主只在最初两句会被压暗正是这一条。
+	# 正确写法：vertex() 里把 COLOR 存进 varying，fragment 里乘回去。
+	# 对照实测见 tools/char_shader_probe.gd。
 	var modulated_shaders := {
 		"char_expr.gdshader": "表情材质一挂上就整张立绘变暗",
 		"transition.gdshader": "转场中的新画面发暗发红",
@@ -2477,16 +2952,24 @@ func _check_shaders() -> void:
 		if src2.is_empty():
 			_ok(false, "%s 可读取" % file_name)
 			continue
-		var bad2 := _color_assigns_reapplying_modulate(src2)
-		_ok(bad2 == 0, "%s 的 COLOR 赋值没有重复叠加 modulate（否则%s）"
-			% [file_name, modulated_shaders[file_name]])
+		_ok(_color_assigns_reapplying_modulate(src2) == 0,
+			"%s 的 COLOR 赋值没有重复叠加顶点色（否则%s）"
+				% [file_name, modulated_shaders[file_name]])
+		_ok(_keeps_vertex_color(src2),
+			"%s 把顶点色乘了回去（否则 modulate 会被丢掉，说话人压暗 / 淡入淡出都会失效）"
+				% file_name)
 
 	# 守卫自检：一个从不失败的守卫等于没有守卫。
 	var bad_src := "void fragment() {\n\tCOLOR = base * COLOR;\n}"
-	var good_src := "void fragment() {\n\tCOLOR = base;\n}"
+	var dropped_src := "void fragment() {\n\tCOLOR = base;\n}"
+	var good_src := ("varying flat vec4 vcol;\n"
+		+ "void vertex() {\n\tvcol = COLOR;\n}\n"
+		+ "void fragment() {\n\tCOLOR = base * vcol;\n}")
 	_ok(_color_assigns_reapplying_modulate(bad_src) == 1
 		and _color_assigns_reapplying_modulate(good_src) == 0,
 		"modulate 守卫自检：抓得出重复叠加的写法、放行得了正确写法")
+	_ok(not _keeps_vertex_color(dropped_src) and _keeps_vertex_color(good_src),
+		"顶点色守卫自检：抓得出丢掉 modulate 的写法、放行得了正确写法")
 
 
 ## 返回「在函数体里出现 return」的入口函数名列表。
@@ -2541,9 +3024,13 @@ func _has_return_statement(body: String) -> bool:
 
 
 ## 数 fragment() 里「给 COLOR 赋值时又把进来的 COLOR 乘了一遍」的行数。
-## 节点 modulate 由引擎在 fragment 之后叠加（实测：modulate=0.55 时渲染结果
-## 正好是 shader 输出的 0.55 倍），shader 里再乘一次 = 叠加两次，
-## 表现为整层被压暗（char_expr 约 -40%、transition 约 -35%）。
+##
+## fragment 进来的 COLOR **已经等于「贴图 × 顶点色」**，再乘一次就是贴图² 量级
+## —— 实测整层暗约 40%（char_expr 一挂材质就变深、transition 转场中的那一层
+## 发暗发红），而且材质一挂上就回不来。
+##
+## 注意这**不是**在禁止「乘顶点色」：顶点色必须乘（见 _keeps_vertex_color），
+## 只是要用 vertex() 里单独取的那一份，不能用 fragment 里这份已经混了贴图的。
 func _color_assigns_reapplying_modulate(src: String) -> int:
 	var body := _strip_line_comments(_extract_function_body(src, "fragment"))
 	var bad := 0
@@ -2554,6 +3041,32 @@ func _color_assigns_reapplying_modulate(src: String) -> int:
 		if l.contains("* COLOR") or l.contains("COLOR *"):
 			bad += 1
 	return bad
+
+
+## fragment 给 COLOR 赋值时，有没有把 vertex() 捕获的顶点色乘回去。
+##
+## 不做语法分析，只看两件事：声明了 varying 顶点色、且 COLOR 赋值里引用了它。
+## 判据故意放这么宽，是为了抓最常见的漏乘写法 —— 只保留 `COLOR = base`，
+## 忘了乘回顶点色。后果是 modulate 被整个丢掉：说话人压暗与淡入淡出同时失灵，
+## 而 modulate 属性层面看不出任何异常（测试读属性全是绿的）。
+func _keeps_vertex_color(src: String) -> bool:
+	var code := _strip_line_comments(src)
+	var varyings: Array = []
+	var re := RegEx.new()
+	if re.compile("varying[^;\\n]*?([A-Za-z_][A-Za-z0-9_]*)\\s*;") == OK:
+		for m in re.search_all(code):
+			varyings.append(m.get_string(1))
+	if varyings.is_empty():
+		return false
+	var body := _extract_function_body(code, "fragment")
+	for line in body.split("\n"):
+		var l := String(line).strip_edges()
+		if not l.begins_with("COLOR") or not l.contains("=") or l.contains("=="):
+			continue
+		for v in varyings:
+			if l.contains(String(v)):
+				return true
+	return false
 
 
 # ---------------------------------------------------------------------------
@@ -2575,6 +3088,15 @@ func _check_audio() -> void:
 	AudioManager.enable_stream_loop(wav)
 	_ok(wav.loop_mode == AudioStreamWAV.LOOP_FORWARD,
 		"WAV 通过 loop_mode 打开循环（字段名与 Ogg / MP3 不同）")
+	# 光设 loop_mode 不够：区间是空的（loop_begin == loop_end）时播放会**立刻结束**，
+	# 症状是「这首曲子根本放不出来」—— playing 恒为 false、位置停在 0、还不报错。
+	# 所以打开循环时必须顺手把空区间补成整段。上面那个合成流正好是空区间。
+	_ok(wav.loop_end > wav.loop_begin,
+		"WAV 打开循环会补全空区间（%d → %d），否则一开循环反而放不出来"
+		% [wav.loop_begin, wav.loop_end])
+	AudioManager.enable_stream_loop(wav, false)
+	_ok(wav.loop_mode == AudioStreamWAV.LOOP_DISABLED,
+		"WAV 关循环走 LOOP_DISABLED")
 	AudioManager.enable_stream_loop(null)
 	_ok(true, "传空流不会崩")
 
@@ -2623,13 +3145,16 @@ func _check_audio() -> void:
 
 
 ## 合成 0.1 秒静音流。没有它，语音队列在素材缺失的骨架工程里根本无从验证。
-static func _make_silent_stream() -> AudioStreamWAV:
+## 合成一段静音流。`seconds` 默认 0.1 秒（够验证「开播了」这类断言）；
+## 要验证「还在播」的时序（自动播放等语音）必须传更长的时间，
+## 否则流会先播完，`is_voice_active()` 变回 false，断言就测不到想测的东西。
+static func _make_silent_stream(seconds: float = 0.1) -> AudioStreamWAV:
 	var wav := AudioStreamWAV.new()
 	wav.format = AudioStreamWAV.FORMAT_16_BITS
 	wav.mix_rate = 22050
 	wav.stereo = false
 	var bytes := PackedByteArray()
-	bytes.resize(2205 * 2)
+	bytes.resize(int(22050 * seconds) * 2)
 	wav.data = bytes
 	return wav
 
@@ -3351,3 +3876,462 @@ func _run_media_script(body: String, check: Callable) -> void:
 	check.call(runner)
 	runner.queue_free()
 	DirAccess.remove_absolute(ProjectSettings.globalize_path(MEDIA_SCRIPT_PATH))
+
+
+# ---------------------------------------------------------------------------
+# 31. 新增能力：停顿点 / 音频效果器 / 语音静音 / 标题音乐 / 视频鉴赏
+#
+# 这一节守的是「解析器认识、调度器不认」和「标记漏成正文」两类静默失效，
+# 外加三个新功能的数据接线（解锁 / 配置 / 注册表）。
+# ---------------------------------------------------------------------------
+
+func _check_new_features(main_node: Node, runner: ScriptRunner) -> void:
+	print("[smoke] 31. 停顿点 / 音频效果器 / 静音 / 标题音乐 / 视频鉴赏")
+
+	# --- 打字停顿点：标记剥离 + 停顿表 ---
+	var gated := TypingTimeline.build("前[stop]后", 10.0)
+	var gstops: Array = gated.get("stops", []) as Array
+	_ok(String(gated.get("display", "")) == "前后", "[stop] 被剥离出显示文本")
+	_ok(gstops.size() == 1, "生成 1 个停顿点（%d）" % gstops.size())
+	if gstops.size() == 1:
+		var g: Dictionary = gstops[0]
+		_ok(int(g.get("index", -1)) == 1, "[stop] 的停顿位置 = 已显示 1 个字符")
+		_ok(bool(g.get("gate", false)), "[stop] 是点击门控（要等点击才继续）")
+
+	var waits := TypingTimeline.build("前[wait=0.5]后", 10.0)
+	var wstops: Array = waits.get("stops", []) as Array
+	_ok(wstops.size() == 1 and not bool((wstops[0] as Dictionary).get("gate", true)),
+		"[wait] 也是停顿点，但会自动恢复（不是门控）")
+
+	# ⚠️ 停顿下标必须是「可见字符数」，不是字符串下标 ——
+	# display 里还留着 [bounce] 这类渲染用标记，两者不是一回事。
+	var mixed := TypingTimeline.build("[bounce]前[/bounce][stop]后", 10.0)
+	var mstops: Array = mixed.get("stops", []) as Array
+	_ok(mstops.size() == 1 and int((mstops[0] as Dictionary).get("index", -1)) == 1,
+		"停顿下标按可见字符数算（不被 BBCode 标记带偏）")
+	_ok(TypingTimeline.strip("前[stop]后") == "前后", "strip 也剥掉 [stop]")
+
+	# --- 内联音频效果器标记 ---
+	var fx := TypingTimeline.build("啊[fx=glitch]！", 10.0)
+	var fev: Array = fx.get("events", []) as Array
+	_ok(String(fx.get("display", "")) == "啊！", "[fx=] 被剥离出显示文本")
+	_ok(fev.size() == 1, "生成 1 个效果器触发点（%d）" % fev.size())
+	if fev.size() == 1:
+		var e: Dictionary = fev[0]
+		_ok(int(e.get("index", -1)) == 1, "触发位置 = 已显示 1 个字符")
+		_ok(String(e.get("kind", "")) == "glitch", "效果器种类解析正确")
+		_ok(String(e.get("bus", "")) == "bgm", "不写 bus= 时默认 BGM 音轨")
+
+	var fx2 := TypingTimeline.build("啊[fx=pitch bus=voice dur=0.4 strength=2 pitch=1.6]", 10.0)
+	var fev2: Array = fx2.get("events", []) as Array
+	if fev2.size() == 1:
+		var e2: Dictionary = fev2[0]
+		_ok(String(e2.get("bus", "")) == "voice", "bus= 能指定音轨")
+		_ok(is_equal_approx(float(e2.get("duration", 0.0)), 0.4), "dur= 能指定时长")
+		_ok(is_equal_approx(float(e2.get("strength", 0.0)), 2.0), "strength= 能指定强度")
+		_ok(is_equal_approx(float(e2.get("pitch", 0.0)), 1.6), "pitch= 能指定移调")
+
+	_ok(TypingTimeline.strip("啊[fx=glitch]！") == "啊！", "strip 也剥掉 [fx=]")
+	# 闭合写法：只剥离，不能漏成正文，也不能被当成一次「默认 glitch」触发
+	var fx_closed := TypingTimeline.build("啊[/fx]！", 10.0)
+	_ok(String(fx_closed.get("display", "")) == "啊！", "[/fx] 只剥离、不漏成正文")
+	_ok((fx_closed.get("events", []) as Array).is_empty(), "[/fx] 不产生触发事件")
+
+	# --- 效果器清单：解析器 / 运行时 / 编辑器共用一份 ---
+	_ok(AudioFxSpec.is_valid_track("bgm") and AudioFxSpec.is_valid_track("all"),
+		"AudioFxSpec 认识音轨名")
+	_ok(not AudioFxSpec.is_valid_track("没这条轨"), "AudioFxSpec 拒绝未知音轨")
+	_ok(AudioFxSpec.is_valid_kind("glitch") and AudioFxSpec.is_clear("off"),
+		"AudioFxSpec 认识效果器名与 off 别名")
+
+	# --- audio_fx 指令解析 ---
+	var parsed := GvsParser.parse(
+		"label start\naudio_fx bgm glitch duration=1.5 strength=2 pitch=1.2\n", "fx.gvs")
+	_ok(bool(parsed["ok"]), "audio_fx 指令解析无错误")
+	for c in parsed["commands"]:
+		var cmd: Dictionary = c
+		if String(cmd.get("op", "")) == "audio_fx":
+			_ok(String(cmd.get("track", "")) == "bgm", "audio_fx track 解析正确")
+			_ok(String(cmd.get("kind", "")) == "glitch", "audio_fx kind 解析正确")
+			_ok(is_equal_approx(float(cmd.get("duration", 0.0)), 1.5), "audio_fx duration= 生效")
+			_ok(is_equal_approx(float(cmd.get("strength", 0.0)), 2.0), "audio_fx strength= 生效")
+	# 拼错必须**解析期报错**，不能静默降级成「什么都没发生」
+	_ok(not bool(GvsParser.parse("label start\naudio_fx bgm glich\n", "b.gvs")["ok"]),
+		"audio_fx 效果器拼错会被解析器拦下")
+	_ok(not bool(GvsParser.parse("label start\naudio_fx 没这条轨 glitch\n", "b.gvs")["ok"]),
+		"audio_fx 音轨写错会被解析器拦下")
+	_ok(bool(GvsParser.parse("label start\naudio_fx all off\n", "b.gvs")["ok"]),
+		"audio_fx all off 合法（用来关闭）")
+
+	# --- 运行时挂载 ---
+	AudioManager.clear_all_audio_fx()
+	var bgm_index := AudioServer.get_bus_index(AudioManager.BGM_BUS_NAME)
+	var baseline_effects := AudioServer.get_bus_effect_count(bgm_index)
+	_ok(baseline_effects >= 1, "BGM 总线上有频谱分析器（%d 个效果）" % baseline_effects)
+
+	_ok(AudioManager.apply_audio_fx("bgm", "glitch", {"duration": 0.0}), "能给 BGM 挂故障效果")
+	_ok(AudioManager.get_audio_fx("bgm") == "glitch",
+		"挂上后查得到（%s）" % AudioManager.get_audio_fx("bgm"))
+	_ok(AudioServer.get_bus_effect_count(bgm_index) > baseline_effects,
+		"效果器追加在频谱分析器之后（%d → %d）"
+		% [baseline_effects, AudioServer.get_bus_effect_count(bgm_index)])
+
+	_ok(AudioManager.apply_audio_fx("all", "echo", {"duration": 0.0}), "all 能一次挂三条音轨")
+	_ok(AudioManager.get_audio_fx("voice") == "echo", "语音总线也挂上了")
+	_ok(AudioManager.get_audio_fx("se") == "echo", "音效总线也挂上了")
+	# 互斥：新的一次会先清掉上一次，链不会越挂越长
+	AudioManager.apply_audio_fx("bgm", "distortion", {"duration": 0.0})
+	_ok(AudioManager.get_audio_fx("bgm") == "distortion", "同一音轨上效果器互斥（换成新的）")
+	_ok(AudioServer.get_bus_effect_count(bgm_index) <= baseline_effects + 3,
+		"换效果器不会让链越挂越长（%d）" % AudioServer.get_bus_effect_count(bgm_index))
+
+	AudioManager.clear_audio_fx("bgm")
+	_ok(AudioManager.get_audio_fx("bgm").is_empty(), "clear_audio_fx 能清掉指定音轨")
+	_ok(AudioManager.get_audio_fx("se") == "echo", "清一条不影响别条")
+	AudioManager.clear_all_audio_fx()
+	_ok(AudioManager.get_audio_fx_state().is_empty(), "clear_all 之后没有残留")
+	_ok(AudioServer.get_bus_effect_count(bgm_index) == baseline_effects,
+		"清理后 BGM 总线上只剩频谱分析器（%d）" % AudioServer.get_bus_effect_count(bgm_index))
+
+	_ok(not AudioManager.apply_audio_fx("bgm", "并没有这个效果", {}), "未知效果器被拒绝")
+	_ok(not AudioManager.apply_audio_fx("并没有这条轨", "glitch", {}), "未知音轨被拒绝")
+
+	# 三条音轨是分开的 —— 否则「让音乐出故障」会把语音一起弄坏
+	_ok(AudioServer.get_bus_index(AudioManager.SE_BUS_NAME) >= 0
+		and AudioServer.get_bus_index(AudioManager.VOICE_BUS_NAME) >= 0,
+		"SE / Voice 总线已建出来（与 BGM 分开调音量与挂效果）")
+
+	# --- 角色语音静音 ---
+	AudioManager.set_muted_voices([])
+	AudioManager.stop_voice()
+	var voice_stream := _make_silent_stream()
+	_ok(not AudioManager.is_voice_muted("alice"), "默认没有角色被静音")
+	AudioManager.voice_channel("alice/line01", voice_stream)
+	_ok(AudioManager.get_voice_id() == "alice/line01", "未静音时语音正常播")
+
+	AudioManager.set_voice_muted("alice", true)
+	_ok(AudioManager.is_voice_muted("alice"), "静音后查得到")
+	_ok(not AudioManager.is_voice_active(), "正在播的该角色语音被立刻掐掉")
+	AudioManager.voice_channel("alice/line02", voice_stream)
+	_ok(not AudioManager.is_voice_active(), "静音角色的语音不播（连通道都不占）")
+	AudioManager.voice_channel("alice/line03", voice_stream, 1.0, true)
+	_ok(AudioManager.get_voice_queue_size() == 0, "静音角色的语音也不占队列")
+	AudioManager.voice_channel("bob/line01", voice_stream)
+	_ok(AudioManager.get_voice_id() == "bob/line01", "别的角色不受影响")
+	# 静音状态要落到配置里（跨存档、跨周目保留）
+	_ok((ConfigManager.get_value("muted_voices", []) as Array).has("alice"),
+		"静音列表写进了配置")
+
+	AudioManager.set_voice_muted("alice", false)
+	AudioManager.stop_voice()
+	_ok(not AudioManager.is_voice_muted("alice"), "取消静音后恢复")
+	AudioManager.clear_muted_voices()
+
+	# --- 设置项与配置默认值 ---
+	_ok(bool(ConfigManager.get_value("click_skip_to_stop", false)),
+		"默认「点击先跳到下一个停顿」是开着的")
+	_ok(String(ConfigManager.get_value("title_bgm", "x")).is_empty(),
+		"标题音乐默认为空（不放音乐）")
+	_ok(typeof(ConfigManager.get_value("muted_voices", null)) == TYPE_ARRAY,
+		"muted_voices 默认是数组")
+
+	# --- 视频鉴赏：注册表 + 页签 + 解锁 ---
+	_ok(CollectionRegistry.SOURCES.has("video"), "视频收藏品已登记进注册表")
+	_ok(CollectionRegistry.total_count("video") > 0,
+		"视频注册表有 %d 项" % CollectionRegistry.total_count("video"))
+	var video_items := CollectionRegistry.get_items("video")
+	var gallery: GalleryPanel = main_node.get("gallery") as GalleryPanel
+	gallery.present(GalleryPanel.TAB_VIDEO)
+	_ok(gallery.get_current_tab() == GalleryPanel.TAB_VIDEO, "鉴赏面板能切到视频页签")
+	_ok(gallery._video_grid.get_child_count() == video_items.size(),
+		"视频网格按注册表生成卡片（%d）" % gallery._video_grid.get_child_count())
+	gallery.hide_panel()
+	# 视频查看器也在位（代码搭建的，不在 main.tscn 里）
+	_ok(main_node.get("video_viewer") != null, "视频查看器已就位")
+	# ⚠️ 断言要量**尺寸**，不是只查可见性 —— 代码创建的 Control 挂在 CanvasLayer 下
+	# 拿不到视口尺寸，会缩成左上角一小块，而 `visible` 照样是 true（记录面板踩过）。
+	var viewer := main_node.get("video_viewer") as Control
+	viewer.present("op_movie")
+	var vp_size := get_viewport().get_visible_rect().size
+	_ok(viewer.size.is_equal_approx(vp_size),
+		"视频查看器铺满视口（%.0fx%.0f / 视口 %.0fx%.0f）"
+		% [viewer.size.x, viewer.size.y, vp_size.x, vp_size.y])
+	viewer.hide_panel()
+	_ok(CollectionManager.get_progress(GalleryPanel.TAB_VIDEO).y == video_items.size(),
+		"视频收集进度的分母 = 注册表条目数")
+
+	# 剧本 video 指令播放时解锁（和 cg 指令一个道理：到达了那个剧情点就算）
+	var col_backup := CollectionManager.to_dict()
+	var without_video := col_backup.duplicate(true)
+	without_video.erase("video")
+	CollectionManager.from_dict(without_video)
+	_ok(not CollectionManager.is_unlocked("video", "op_movie"), "准备：影片尚未解锁")
+	runner.load_text("label start\nvideo op_movie\n", "res://data/scripts/__smoke_video.gvs")
+	runner.start()
+	_ok(CollectionManager.is_unlocked("video", "op_movie"),
+		"video 指令播放时解锁了影片收藏")
+	CollectionManager.from_dict(col_backup)
+
+	# --- 点击跳到下一个停顿点（走真实对话框）---
+	var dialogue: DialogueBox = main_node.get("dialogue") as DialogueBox
+	runner.load_text("label start\nnarr 前[stop]后\nnarr 第二句\n",
+		"res://data/scripts/__smoke_stop.gvs")
+	runner.start()
+	_ok(runner.is_waiting_say(), "剧本停在这句对白上")
+	await _wait(0.5)
+	_ok(dialogue.is_halted(), "遇到 [stop] 时停下等点击（不会一路打完）")
+	_ok(String(main_node.get("_last_text")) == "前[stop]后", "停顿不影响这一句的原文")
+	main_node.call("_on_advance_requested")
+	_ok(not dialogue.is_halted(), "点击后放行，继续显示")
+	await _wait(0.5)
+	_ok(not dialogue.is_typing(), "余下的字显示完后打字结束")
+	main_node.call("_on_advance_requested")
+	_ok(String(main_node.get("_last_text")) == "第二句", "再点一次才推进到下一句")
+
+	# --- 自动播放等语音念完 ---
+	# 不等的话自动播放会在半句话上跳走（语音长度和文本长度没关系，估算不出来）
+	runner.load_text("label start\nnarr 自动播放测试句\nnarr 第二句\n",
+		"res://data/scripts/__smoke_auto.gvs")
+	runner.start()
+	await _wait(0.15)
+	main_node.call("_toggle_auto")
+	_ok(bool(main_node.get("_auto_mode")), "自动播放已打开")
+	AudioManager.voice_channel("bob/auto", _make_silent_stream(8.0))
+	_ok(AudioManager.is_voice_active(), "这一句的语音在播")
+	main_node.set("_auto_deadline_ms", Time.get_ticks_msec() - 1)
+	await _wait(0.35)
+	_ok(String(main_node.get("_last_text")) == "自动播放测试句",
+		"语音没念完时自动播放不推进（实得「%s」）" % main_node.get("_last_text"))
+	AudioManager.notify_voice_finished()
+	await _wait(0.35)
+	_ok(String(main_node.get("_last_text")) == "第二句", "语音念完后自动播放才推进")
+	main_node.call("_stop_auto_features")
+	AudioManager.stop_voice()
+	_ok(not bool(main_node.get("_auto_mode")), "测试后关掉自动播放，不干扰后面的用例")
+
+	dialogue.hide_box()
+
+
+# ---------------------------------------------------------------------------
+# 32. 剧本语言：call 参数 / 台词插值 / together 并行组
+#
+# 这三样都是「解析器 + 调度器」两侧要同时改对的，所以必须端到端跑一遍
+# （只测 parser 产出抓不到「调度器没接线」这类静默失效）。
+# ---------------------------------------------------------------------------
+
+const LANG_SCRIPT_PATH := "user://__smoke_lang.gvs"
+
+
+func _check_script_language() -> void:
+	print("[smoke] 32. call 参数 / 台词插值 / together")
+
+	# --- 插值器本身 ---
+	_ok(GvsInterp.resolve("你好 {$name}", func(n: String) -> Variant:
+		return "世界" if n == "name" else null) == "你好 世界", "插值替换生效")
+	# 查不到时**原样保留**，不换成空串 —— 静默变空是最难查的一类问题
+	_ok(GvsInterp.resolve("{$没有这个}", func(_n: String) -> Variant:
+		return null) == "{$没有这个}", "查不到的插值原样保留")
+	_ok(GvsInterp.resolve("没有插值", func(_n: String) -> Variant:
+		return 1) == "没有插值", "没有插值时不改动原文")
+	# 整数不能显示成 3.0（存档 JSON 会把整数读回 float，这是最容易踩的坑）
+	_ok(GvsInterp.format_value(3.0) == "3", "整数浮点值不显示小数点")
+	_ok(GvsInterp.format_value(3.5) == "3.5", "小数照常显示")
+	_ok(GvsInterp.format_value(true) == "true", "bool 显示 true")
+	_ok(GvsInterp.format_value(7) == "7", "int 显示 7")
+	var names := GvsInterp.names_in("{$a} 和 {$b} 和 {$a}")
+	_ok(names.size() == 2, "插值名去重（%d）" % names.size())
+	_ok(GvsInterp.is_namespaced("affection.alice") and GvsInterp.is_positional("1"),
+		"命名空间 / 位置参数识别正确")
+
+	# --- call 参数 + 插值（端到端）---
+	var probe := ScriptRunner.new()
+	add_child(probe)
+	probe.say.connect(_collect_say_text)
+	_say_texts.clear()
+	_ended_id = ""
+	_ended_title = ""
+	probe.script_ended.connect(_collect_ending)
+	var script := "\n".join([
+		"label start",
+		"set name 世界",
+		"affection alice 17",
+		"call greet who=alice",
+		"call greet2 alice 3",
+		"call outer",
+		"narr 变量 {$name} · 好感 {$affection.alice} · 旗标 {$flag.met} · 未定义 {$nope}",
+		"ending smoke_call \"结局 {$name}\"",
+		"",
+		"label greet",
+		"narr 具名 {$who}",
+		"return",
+		"",
+		"label greet2",
+		"narr 位置 {$1} 和 {$2}",
+		"return",
+		"",
+		"label outer",
+		"set who 外层",
+		"call greet who=内层",
+		"narr 外层仍是 {$who}",
+		"return",
+		"",
+	])
+	probe.load_text(script, LANG_SCRIPT_PATH)
+	probe.start()
+	await _drive_to_end(probe)
+	_ok(_say_texts.has("具名 alice"), "call 具名参数能在子过程里插值（%s）" % str(_say_texts))
+	_ok(_say_texts.has("位置 alice 和 3"), "call 位置参数能用 {$1} / {$2}")
+	# 参数作用域是局部的：子过程里的 who 不该污染调用方的变量
+	_ok(_say_texts.has("外层仍是 外层"), "call 参数不污染调用方的同名变量")
+	_ok(_say_texts.has("变量 世界 · 好感 17 · 旗标 false · 未定义 {$nope}"),
+		"变量 / 好感度 / 旗标插值都对（好感度不能显示成 17.0）")
+	_ok(_ended_title == "结局 世界", "结局标题也走插值（%s）" % _ended_title)
+	probe.queue_free()
+
+	# --- 旧存档兼容：call_stack 里是整数（call 带参数之前的样子）---
+	# 必须**落盘**再 restore_state —— 后者是从磁盘读的（读档路径就是那样），
+	# 只 load_text 到内存的话它会直接失败。
+	var legacy_src := "label start\ncall sub\nnarr 回来了\nending e \"x\"\nlabel sub\nreturn\n"
+	var legacy_file := FileAccess.open(LANG_SCRIPT_PATH, FileAccess.WRITE)
+	legacy_file.store_string(legacy_src)
+	legacy_file.close()
+	var legacy := ScriptRunner.new()
+	add_child(legacy)
+	_ok(legacy.restore_state({"file": LANG_SCRIPT_PATH, "ip": 1, "call_stack": [2]}),
+		"旧存档的整数调用栈能读进来（向后兼容）")
+	_ok(legacy.is_waiting_say(), "兼容读档后停在下一条对白上")
+	legacy.queue_free()
+
+	# --- together 解析 ---
+	var tp := GvsParser.parse(
+		"label start\ntogether\n    bg classroom fade=0.8\n    show alice fade=0.3\nend\n",
+		"t.gvs")
+	_ok(bool(tp["ok"]), "together 解析无错误")
+	var tcmd: Dictionary = {}
+	for c in tp["commands"]:
+		if String((c as Dictionary).get("op", "")) == "together":
+			tcmd = c
+	_ok(tcmd.has("body") and (tcmd["body"] as Array).size() == 2,
+		"块内两条指令都收进了 body（%d）" % (tcmd.get("body", []) as Array).size())
+	# ⚠️ 块内指令**不能同时留在顶层** —— 否则会被顺序执行一遍，
+	# 表现是「同一段演出播了两次」。
+	_ok((tp["commands"] as Array).size() == 2,
+		"块内指令不进顶层（顶层只有 label + together，实得 %d）"
+		% (tp["commands"] as Array).size())
+
+	# 只允许非阻塞的演出 / 音频指令
+	_ok(not bool(GvsParser.parse("label start\ntogether\n    narr 不行\nend\n", "t.gvs")["ok"]),
+		"together 里写旁白会被解析器拦下")
+	_ok(not bool(GvsParser.parse("label start\ntogether\n    wait 1\nend\n", "t.gvs")["ok"]),
+		"together 里写 wait 会被解析器拦下")
+	_ok(not bool(GvsParser.parse("label start\ntogether\n    jump x\nend\n", "t.gvs")["ok"]),
+		"together 里写跳转会被解析器拦下")
+	_ok(not bool(GvsParser.parse(
+		"label start\ntogether\n    video op wait=true\nend\n", "t.gvs")["ok"]),
+		"together 里的 video 不能带 wait=true（那个等待会被块自己的等待覆盖）")
+	_ok(not bool(GvsParser.parse(
+		"label start\ntogether\n    together\n    end\nend\n", "t.gvs")["ok"]),
+		"together 不能嵌套")
+	_ok(not bool(GvsParser.parse("label start\ntogether\n    bg classroom\n", "t.gvs")["ok"]),
+		"未闭合的 together 会被解析器拦下")
+	_ok(bool(GvsParser.parse("label start\ntogether\nend\n", "t.gvs")["ok"]),
+		"空的 together 合法")
+
+	# --- together 运行：块内一起启动，等最长的那条 ---
+	var trunner := ScriptRunner.new()
+	add_child(trunner)
+	trunner.stage_command.connect(_collect_stage_cmd)
+	trunner.load_text("label start\ntogether\n    bg classroom fade=0.8\n"
+		+ "    show alice fade=0.3\nend\nnarr 之后\n", LANG_SCRIPT_PATH)
+	_seen_stage_ops.clear()
+	trunner.start()
+	_ok(_seen_stage_ops.has("bg") and _seen_stage_ops.has("show"),
+		"块内指令都转发到了演出层（%s）" % str(_seen_stage_ops))
+	_ok(trunner.get_state_name() == "waiting_timer",
+		"块结束后进入等待态（等最长的那条，实得 %s）" % trunner.get_state_name())
+	await _wait(0.5)
+	_ok(trunner.is_waiting_say(), "等够时间后继续往下走（停在下一句）")
+
+	# duration=0 → 只启动、不等
+	trunner.load_text("label start\ntogether duration=0\n    bg classroom fade=0.8\nend\n"
+		+ "ending e \"x\"\n", LANG_SCRIPT_PATH)
+	trunner.start()
+	_ok(trunner.is_ended(), "duration=0 的 together 只启动不等（直接走到结局）")
+	trunner.queue_free()
+
+	# --- 静态校验认得出插值 ---
+	# `{$没写过}` 必须报出来 —— 不报的话玩家只会看到原样的 {$没写过}
+	var audit_src := "label start\nnarr 你好 {$谁}\n"
+	var parsed := GvsParser.parse(audit_src, "audit.gvs")
+	_ok(bool(parsed["ok"]), "带插值的剧本解析无错误")
+	var interp_names := GvsInterp.names_in("你好 {$谁}")
+	_ok(interp_names.size() == 1 and interp_names[0] == "谁",
+		"中文插值名也能提取出来（%s）" % str(interp_names))
+	var reads: Array = [{"name": "谁", "file": "a.gvs", "line": 3}]
+	_ok(ScriptAudit.interp_warnings(reads, {}).size() == 1,
+		"没人写过的插值会被静态校验报出来")
+	_ok(ScriptAudit.interp_warnings(reads, {"谁": true}).is_empty(),
+		"写过的插值不报警")
+	_ok(ScriptAudit.interp_warnings([
+		{"name": "affection.alice", "file": "a.gvs", "line": 1},
+		{"name": "flag.met", "file": "a.gvs", "line": 2},
+		{"name": "1", "file": "a.gvs", "line": 3},
+	], {}).is_empty(), "命名空间 / 位置参数插值不报警（引擎或 call 提供）")
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(LANG_SCRIPT_PATH))
+
+
+## script_ended 的收集器（lambda 按值捕获，赋值传不出来，所以用成员方法）
+func _collect_ending(id: String, title: String) -> void:
+	_ended_id = id
+	_ended_title = title
+
+
+# ---------------------------------------------------------------------------
+# 33. 音频舒适度：打字音 + 对白时压低 BGM
+# ---------------------------------------------------------------------------
+
+func _check_audio_comforts() -> void:
+	print("[smoke] 33. 打字音 / 对白时压低 BGM")
+
+	# --- 打字音：没有素材也要有声音（内置合成）---
+	var synth := AudioManager._make_typing_stream()
+	_ok(synth != null and synth.get_length() > 0.0,
+		"内置合成打字音有长度（%.3f 秒）" % (synth.get_length() if synth != null else 0.0))
+	_ok(synth.data.size() > 0, "合成打字音带 PCM 数据（%d 字节）" % synth.data.size())
+
+	AudioManager.clear_last_se()
+	AudioManager.play_typing()
+	_ok(AudioManager.get_last_se_id() == "type", "打字音走内置合成（不依赖素材）")
+
+	# 关掉开关 → 完全安静
+	ConfigManager.set_value("text_sfx", false, false)
+	AudioManager.clear_last_se()
+	AudioManager.play_typing()
+	_ok(AudioManager.get_last_se_id().is_empty(), "关掉「打字音效」后不再发声")
+	ConfigManager.set_value("text_sfx", true, false)
+
+	# --- ducking：语音在播时压低 BGM ---
+	AudioManager.set_muted_voices([])
+	AudioManager.stop_voice()
+	_ok(not AudioManager.is_bgm_ducked(), "初始没有压低")
+	var stream := _make_silent_stream()
+	AudioManager.voice_channel("bob/duck", stream)
+	_ok(AudioManager.is_bgm_ducked(), "语音开播时压低 BGM（%.0f dB）" % AudioManager.get_bgm_duck_db())
+	AudioManager.notify_voice_finished()
+	_ok(not AudioManager.is_bgm_ducked(), "语音自然播完后恢复")
+	AudioManager.voice_channel("bob/duck2", stream)
+	_ok(AudioManager.is_bgm_ducked(), "再次开播又压低")
+	AudioManager.stop_voice()
+	_ok(not AudioManager.is_bgm_ducked(), "语音被中断时也恢复（否则 BGM 会一直闷着）")
+
+	# 关掉开关 → 不再压
+	ConfigManager.set_value("duck_bgm", false, false)
+	AudioManager.voice_channel("bob/duck3", stream)
+	_ok(not AudioManager.is_bgm_ducked(), "关掉「对白时压低音乐」后不再压")
+	AudioManager.stop_voice()
+	ConfigManager.set_value("duck_bgm", true, false)
+
+	# 压低走的是**总线音量**，不能动播放器自己的 volume_db（那条被淡入淡出占着）
+	_ok(is_equal_approx(AudioManager._bgm_player.volume_db,
+		AudioManager._target_bgm_db()) or AudioManager._bgm_player.volume_db <= 0.0,
+		"ducking 不写播放器的 volume_db（与切歌淡入淡出互不干扰）")

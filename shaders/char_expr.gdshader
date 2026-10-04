@@ -8,10 +8,33 @@ shader_type canvas_item;
 // progress 从 0 推到 1，两张图交叉混合。
 //
 // has_from 为 false 时直接输出 TEXTURE，避免没设 from_tex 时采到空白纹理。
+//
+// ⚠ modulate（focus_speaker 改的 modulate.rgb、淡入淡出改的 modulate.a）：
+// canvas_item 的 fragment 里，进来的 COLOR **已经等于「贴图 × 顶点色」**
+// （顶点色 = modulate × self_modulate × 各级父节点）。于是有两种写法都会坏，
+// 而且都只有逐像素量渲染色才看得出来（modulate 属性本身一直是对的，逻辑测试全绿）：
+//
+//   1) COLOR = texture(...)          —— 顶点色被整个丢掉。
+//      表现为「一挂上本材质，说话人压暗与淡入淡出就永久失效」——
+//      女主换过一次表情之后，再也不会被压暗，就是这一条。
+//   2) COLOR = texture(...) * COLOR  —— 顶点色叠了两遍（变成 贴图² 量级），
+//      整张立绘恒暗约 40%，一挂材质就变深色且回不来。
+//
+// 正确写法：在 vertex() 里单独取一次顶点色，fragment 里乘回去。
+// 对照表（无材质 / COLOR=tex / COLOR=tex*COLOR / 本写法）见
+// tools/char_shader_probe.gd，smoke 第 22 节的守卫盯着这两种坏法。
 
 uniform sampler2D from_tex : filter_linear, repeat_disable;
 uniform float progress : hint_range(0.0, 1.0) = 1.0;
 uniform bool has_from = false;
+
+// 干净的顶点色。fragment 里的 COLOR 已经被贴图乘过，取不出这一份。
+// flat 是安全的：整个矩形四个顶点的 modulate 相同。
+varying flat vec4 vcol;
+
+void vertex() {
+	vcol = COLOR;
+}
 
 void fragment() {
 	vec4 base = texture(TEXTURE, UV);
@@ -22,10 +45,5 @@ void fragment() {
 		vec4 prev = texture(from_tex, UV);
 		base = mix(prev, base, progress);
 	}
-	// 只输出「贴图本身的颜色」就够了，**不要**再乘进来的 COLOR。
-	// 节点 modulate（说话人压暗改的 modulate.rgb、淡入淡出改的 modulate.a）
-	// 由引擎在 fragment 之后叠加，这里乘一遍等于叠加两次：
-	// 实测整张立绘会暗掉约 40%，而且是「一挂上本材质就永久变暗」——
-	// 正是「女主前两句正常、之后变深色变不回来」那个 bug。
-	COLOR = base;
+	COLOR = base * vcol;
 }

@@ -1,0 +1,9 @@
+{
+  "_comment": "角色名册。设置面板的「角色语音静音」按它列出角色（导出后依然可靠，不像扫目录那样依赖打包方式）。name 是显示名，应当与剧本里的说话人标签一致；新增角色时把它加进来即可 —— 漏掉的角色仍会被 assets/sprites/ 扫描兜底列出。",
+
+  "items": [
+    { "id": "alice",   "name": "alice" },
+    { "id": "bob",     "name": "bob" },
+    { "id": "xiaolan", "name": "xiaolan" }
+  ]
+}

@@ -11,6 +11,7 @@ extends RefCounted
 const SOURCES := {
 	"cg": "res://data/collection/cg.json",
 	"music": "res://data/collection/music.json",
+	"video": "res://data/collection/video.json",
 	"endings": "res://data/collection/endings.json",
 }
 

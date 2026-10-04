@@ -242,6 +242,15 @@ func get_cg_id() -> String:
 	return _cg_id
 
 
+## 供自动化测试 / 调试使用：CG 此刻是不是**真的画在屏幕上**。
+##
+## 与 get_cg_id() 不是一回事：hide_cg 会立刻把 id 清掉，但矩形还要淡出一段时间，
+## 那段时间里它仍然盖着画面。探针要在采样前问「有没有东西盖着立绘」，
+## 要的是「此刻真在画」，不是「状态还开着」—— 这两个接口别合并。
+func is_cg_rendering() -> bool:
+	return _cg_rect != null and _cg_rect.visible and _cg_rect.modulate.a > 0.01
+
+
 func _kill_cg_tween() -> void:
 	if _cg_tween != null and _cg_tween.is_valid():
 		_cg_tween.kill()
@@ -380,8 +389,14 @@ static func is_slide(transition: String) -> bool:
 	return not _entry_offset(transition).is_zero_approx()
 
 
+## opts 可选键：
+##   x     —— 立绘框**中心**的设计像素 X（默认由 at= 预设决定）
+##   y     —— 立绘**脚底**的设计像素 Y（默认 1080+OVERHANG，即站在画面底）
+##   scale —— 基准缩放（这个人本来就多大），与 zoom 的动画缩放相乘
+## 一个都不给时行为与旧版完全一致。
 func show_char(char_id: String, expr: String = "normal", at: String = "center",
-		transition: String = "fade", duration: float = 0.3) -> void:
+		transition: String = "fade", duration: float = 0.3,
+		opts: Dictionary = {}) -> void:
 	if char_id.is_empty():
 		return
 	var entry := _ensure_char(char_id)
@@ -391,9 +406,18 @@ func show_char(char_id: String, expr: String = "normal", at: String = "center",
 	rect.texture = PlaceholderAssets.get_char(char_id, expr)
 	entry["expr"] = expr
 	entry["at"] = at
+	# 每次 show 都是一次「重新定位」：没给的轴回到默认，而不是沿用上一次。
+	# 否则 show alice x=500 之后再 show alice at=left 会半个位置沿用旧 X，
+	# 排查起来非常费劲。
+	entry["pos_x"] = float(opts["x"]) if opts.has("x") else NAN
+	entry["pos_y"] = float(opts["y"]) if opts.has("y") else NAN
+	entry["base_scale"] = maxf(0.05, float(opts["scale"])) if opts.has("scale") else 1.0
+	# 动画缩放归 1：zoom 是「临时的靠近」，不该被上一次的 zoom 带进新场景
+	entry["scale"] = 1.0
+	_apply_char_scale(entry)
 	entry["visible"] = true
 
-	var target := _char_position(at)
+	var target := _char_position_for(entry)
 	_kill_char_tween(entry)
 
 	if transition == "none" or duration <= 0.0:
@@ -433,10 +457,13 @@ func hide_char(char_id: String, transition: String = "fade", duration: float = 0
 	# 角色离场后状态归零 —— 否则放大过 / 压暗过的角色再次出场还是那个样子
 	var reset := func() -> void:
 		rect.visible = false
-		rect.scale = Vector2.ONE
 		rect.modulate = Color.WHITE
 		rect.modulate.a = 0.0
+		# 只把「动画缩放」归 1。基准缩放（base_scale）与坐标不在这里清 ——
+		# 下一次 show 会按参数显式重置（不给就回默认），这里越权清掉反而会
+		# 让「滑出 → 再滑入」的同一角色丢掉 scale。
 		entry["scale"] = 1.0
+		_apply_char_scale(entry)
 
 	if transition == "none" or duration <= 0.0:
 		reset.call()
@@ -449,7 +476,7 @@ func hide_char(char_id: String, transition: String = "fade", duration: float = 0
 	else:
 		# 滑出：朝屏幕外滑走，alpha 保持不透明，出画后再隐藏
 		tw.tween_property(rect, "position",
-			_char_position(String(entry["at"])) + offset, duration).set_trans(
+			_char_position_for(entry) + offset, duration).set_trans(
 			Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	tw.tween_callback(reset)
 	entry["tween"] = tw
@@ -541,16 +568,25 @@ func set_char_anim(char_id: String, speed: float = 1.0, pause: bool = false,
 	return true
 
 
-func move_char(char_id: String, at: String, duration: float = 0.35,
-		ease_name: String = DEFAULT_EASE) -> void:
+## at 传空串表示「不动预设，只用 opts 里的 x / y 覆盖」。
+func move_char(char_id: String, at: String = "", duration: float = 0.35,
+		ease_name: String = DEFAULT_EASE, opts: Dictionary = {}) -> void:
 	if not _chars.has(char_id):
 		return
 	var entry: Dictionary = _chars[char_id]
 	var rect := entry["rect"] as TextureRect
-	entry["at"] = at
+	if not at.is_empty():
+		entry["at"] = at
+	if opts.has("x"):
+		entry["pos_x"] = float(opts["x"])
+	if opts.has("y"):
+		entry["pos_y"] = float(opts["y"])
+	if opts.has("scale"):
+		entry["base_scale"] = maxf(0.05, float(opts["scale"]))
+		_apply_char_scale(entry)
 	_kill_char_tween(entry)
 
-	var target := _char_position(at)
+	var target := _char_position_for(entry)
 	if duration <= 0.0:
 		rect.position = target
 		return
@@ -575,7 +611,7 @@ func char_jump(char_id: String, height: float = 40.0, times: int = 2,
 	_kill_char_tween(entry)
 
 	# 从基准位起跳，避免上一次动画被打断后停在半空
-	var base := _char_position(String(entry["at"]))
+	var base := _char_position_for(entry)
 	rect.position = base
 	if duration <= 0.0 or times <= 0:
 		return
@@ -591,6 +627,9 @@ func char_jump(char_id: String, height: float = 40.0, times: int = 2,
 
 
 ## 靠近 / 远离（缩放）。倍数 > 1 放大（靠近），< 1 缩小（后退）。
+##
+## 这是**动画上的临时倍率**，会乘在基准缩放（show/move 的 scale=）之上 ——
+## 「这个角色本来就小」和「这一步凑近一点」是两件事，各记各的。
 func char_zoom(char_id: String, scale_factor: float, duration: float = 0.4,
 		ease_name: String = "out_back") -> void:
 	if not _chars.has(char_id):
@@ -600,7 +639,7 @@ func char_zoom(char_id: String, scale_factor: float, duration: float = 0.4,
 	_kill_char_tween(entry)
 
 	entry["scale"] = maxf(0.05, scale_factor)
-	var target := Vector2.ONE * float(entry["scale"])
+	var target := Vector2.ONE * (float(entry["base_scale"]) * float(entry["scale"]))
 	if duration <= 0.0:
 		rect.scale = target
 		return
@@ -619,7 +658,7 @@ func char_shake(char_id: String, strength: float = 28.0, times: int = 5,
 	var rect := entry["rect"] as TextureRect
 	_kill_char_tween(entry)
 
-	var base := _char_position(String(entry["at"]))
+	var base := _char_position_for(entry)
 	rect.position = base
 	if duration <= 0.0 or times <= 0:
 		return
@@ -890,11 +929,16 @@ func clear() -> void:
 			dim_tween.kill()
 		var rect := entry["rect"] as TextureRect
 		rect.visible = false
-		rect.scale = Vector2.ONE
 		rect.modulate = Color.WHITE
 		rect.modulate.a = 0.0
 		entry["visible"] = false
 		entry["scale"] = 1.0
+		# 站位与基准缩放也归零 —— 否则读档 / 重播后会残留上一个场景的
+		# 立绘位置与大小（曾经的「读档后某人还是放大的」就是这个来源）
+		entry["base_scale"] = 1.0
+		entry["pos_x"] = NAN
+		entry["pos_y"] = NAN
+		_apply_char_scale(entry)
 	_bg_id = ""
 	_bg_a.texture = null
 	_bg_b.texture = null
@@ -916,11 +960,20 @@ func get_state() -> Dictionary:
 		var entry: Dictionary = _chars[char_id]
 		if not bool(entry["visible"]):
 			continue
-		chars.append({
+		var item := {
 			"char": String(char_id),
 			"expr": String(entry["expr"]),
 			"at": String(entry["at"]),
-		})
+		}
+		# NAN 不能进 JSON（编码会失败），所以只在真的覆盖过时才写这三个键。
+		# 老存档里没有它们 —— restore_state 按「未覆盖」处理，行为不变。
+		if not is_nan(float(entry["pos_x"])):
+			item["x"] = float(entry["pos_x"])
+		if not is_nan(float(entry["pos_y"])):
+			item["y"] = float(entry["pos_y"])
+		if not is_equal_approx(float(entry["base_scale"]), 1.0):
+			item["scale"] = float(entry["base_scale"])
+		chars.append(item)
 	return {"bg": _bg_id, "cg": _cg_id, "chars": chars, "weather": _weather_id}
 
 
@@ -935,11 +988,19 @@ func restore_state(data: Dictionary) -> void:
 	for item in data.get("chars", []):
 		if typeof(item) != TYPE_DICTIONARY:
 			continue
+		var d: Dictionary = item
+		var opts := {}
+		if d.has("x"):
+			opts["x"] = float(d["x"])
+		if d.has("y"):
+			opts["y"] = float(d["y"])
+		if d.has("scale"):
+			opts["scale"] = float(d["scale"])
 		show_char(
-			String((item as Dictionary).get("char", "")),
-			String((item as Dictionary).get("expr", "normal")),
-			String((item as Dictionary).get("at", "center")),
-			"none", 0.0)
+			String(d.get("char", "")),
+			String(d.get("expr", "normal")),
+			String(d.get("at", "center")),
+			"none", 0.0, opts)
 	# 天气：clear() 会先把它关掉，这里再按存档还原。
 	# 老存档没有这个字段 → 空串 → 保持无天气；强度不存，回滚不追求逐帧一致。
 	var weather := String(data.get("weather", ""))
@@ -986,10 +1047,37 @@ func _ensure_char(char_id: String) -> Dictionary:
 		"at": "center",
 		"visible": false,
 		"tween": null,
-		"scale": 1.0,
+		"scale": 1.0,        # 动画缩放（zoom 指令），临时靠近用
+		"base_scale": 1.0,   # 基准缩放（show / move 的 scale=），与上面相乘
+		"pos_x": NAN,        # 立绘框中心的设计像素 X；NAN = 用 at 预设
+		"pos_y": NAN,        # 立绘脚底的设计像素 Y；NAN = 用默认底线
 	}
 	_chars[char_id] = entry
 	return entry
+
+
+## 某个立绘当前该站的矩形左上角（把 at 预设、x/y 覆盖、以及默认底线都算进去）。
+##
+## at 覆盖水平中心，y 覆盖脚底 —— 两者可以只用其中一个，另一个继续走预设 / 默认。
+func _char_position_for(entry: Dictionary) -> Vector2:
+	var center_x := DESIGN.x * float(POSITION_RATIOS.get(String(entry["at"]), 0.5))
+	if not is_nan(float(entry["pos_x"])):
+		center_x = float(entry["pos_x"])
+	var feet_y := DESIGN.y + CHAR_BOTTOM_OVERHANG
+	if not is_nan(float(entry["pos_y"])):
+		feet_y = float(entry["pos_y"])
+	return Vector2(center_x - CHAR_WIDTH * 0.5, feet_y - CHAR_HEIGHT)
+
+
+## 把「基准缩放 × 动画缩放」落到 rect 上。
+##
+## 两路缩放分开存是有意的：背景运镜 / zoom 会被 clear() 复位，
+## 而「这个角色本来就比人矮」属于角色设定，不该被一次 zoom 抹掉。
+func _apply_char_scale(entry: Dictionary) -> void:
+	var rect := entry["rect"] as TextureRect
+	if rect == null:
+		return
+	rect.scale = Vector2.ONE * (float(entry["base_scale"]) * float(entry["scale"]))
 
 
 func _char_position(at: String) -> Vector2:
@@ -1028,11 +1116,29 @@ func get_world_offset() -> Vector2:
 	return Vector2.ZERO if _world == null else _world.position
 
 
-## 供自动化测试 / 调试使用：取某个立绘当前的缩放倍数
+## 供自动化测试 / 调试使用：取某个立绘当前**实际**的缩放倍数
+## （基准缩放 × 动画缩放，也就是 rect 上真实的 scale）
 func get_char_scale(char_id: String) -> float:
 	if not _chars.has(char_id):
 		return -1.0
 	return (_chars[char_id]["rect"] as TextureRect).scale.x
+
+
+## 供自动化测试 / 调试使用：取某个立绘的**基准**缩放（show / move 的 scale= 设的那个）
+func get_char_base_scale(char_id: String) -> float:
+	if not _chars.has(char_id):
+		return -1.0
+	return float(_chars[char_id]["base_scale"])
+
+
+## 供自动化测试 / 调试使用：取某个立绘当前真正在用的贴图（占位图也是它）。
+##
+## 探针拿它当「基准图」来量渲染色 —— 固定用某一张素材会在换表情的行上
+## 量出假偏移（两张图内容本来就不同）。
+func get_char_texture(char_id: String) -> Texture2D:
+	if not _chars.has(char_id):
+		return null
+	return (_chars[char_id]["rect"] as TextureRect).texture
 
 
 ## 供自动化测试 / 调试使用：取闪光层当前 alpha

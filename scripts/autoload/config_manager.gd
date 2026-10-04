@@ -22,6 +22,26 @@ const DEFAULTS := {
 	"rollback_wheel": true,  # 滚轮上=回滚剧情，下=前进；关掉则滚轮上退回「打开回看」
 	"dim_read_text": false,  # 已读过的台词压暗显示，避免重读时认不出哪些看过
 	"language": "zh_CN",     # 界面语言，对应 data/i18n/<语言>.json
+	# 点击正在打字的一句时，先快进到**下一个停顿点**（[wait] / [stop]）而不是
+	# 直接显示全文。关掉就回到「一点就显示全文」的老手感。
+	"click_skip_to_stop": true,
+	# 标题界面播放的 BGM id。空串 = 标题不放音乐（默认）。
+	# 候选只列**已解锁**的曲目，见 settings_panel 的「标题音乐」下拉。
+	"title_bgm": "",
+	# 被玩家静音的角色 id 列表。语音 id 是 `<角色>/<台词>`，取斜杠前那一段。
+	"muted_voices": [],
+	# 打字机音效。没有 `assets/audio/se/type.*` 时用内置合成音，
+	# 所以这个开关一开就有手感（关掉就完全安静）。
+	"text_sfx": true,
+	"text_sfx_volume": 0.45,
+	# 语音播放时压低 BGM（ducking）。压的是 BGM **总线**音量，
+	# 与切歌淡入淡出走的是两条互不干扰的路。
+	"duck_bgm": true,
+	"duck_db": 12.0,         # 压低多少 dB
+	"duck_attack": 0.12,     # 压下去用多久（要快，不然台词听不清）
+	"duck_release": 0.45,    # 放开用多久（要慢，不然像音量跳变）
+	# 自动播放时，若这一句的语音还没念完就先等它 —— 否则会在半句话上跳走。
+	"auto_wait_voice": true,
 }
 
 var data: Dictionary = {}

@@ -23,6 +23,8 @@ const THUMB_INTERVAL_MS := 15000
 ## 回滚历史保留的最大节点数。够翻好几章，又不至于把内存吃满 ——
 ## 每份快照只有几百字节（软状态 + 画面摘要），100 份是几十 KB 量级。
 const ROLLBACK_CAPACITY := 100
+## 自动播放等语音时，多久回头查一次「念完了没有」
+const VOICE_POLL_MS := 120
 
 @onready var stage: Stage = %Stage
 ## 全屏特效层。在 UILayer 之上（见 main.tscn 的 FxLayer），
@@ -42,6 +44,8 @@ const ROLLBACK_CAPACITY := 100
 @onready var ui_layer: CanvasLayer = $UILayer
 ## 记录面板（结局 / 路线 / 已读 / 章节）完全由代码搭建，所以不在 main.tscn 里
 var records: RecordsPanel
+## 视频鉴赏的播放器。同样完全由代码搭建（见 VideoViewer 的说明）
+var video_viewer: VideoViewer
 ## 调试控制台（仅 debug 构建）
 var debug_console: DebugConsole
 @onready var title: TitleScreen = %TitleScreen
@@ -86,6 +90,19 @@ var _replay_snapshot: Dictionary = {}
 
 ## 重播期间禁止写自动存档，否则会把玩家真实进度覆盖成片段里的位置
 var _autosave_enabled: bool = true
+
+## 进鉴赏前剧本在放的那首 BGM。鉴赏里试听会把它顶掉，关面板时要放回来 ——
+## 试听走的是 loop = false（要靠 bgm_finished 决定下一首），不还回去的话
+## 剧本就只剩一首放完即止的曲子。
+var _bgm_before_gallery: String = ""
+## 这一轮鉴赏里有没有点过试听。没点过就不该碰音频 ——
+## 剧本 BGM 好端端在放，关个面板把它重启一遍是没道理的。
+var _preview_started: bool = false
+
+## 标题界面正在放的那首 BGM（空串 = 标题不放音乐）。
+## 单独记一份是为了「离开标题时知道该不该停」—— 剧本自己会放 BGM，
+## 但剧本第一句之前标题那首还在响，不停就会两首叠着。
+var _title_bgm_id: String = ""
 
 ## 回滚历史。每显示一句对白 / 弹一次选项就存一份快照，滚轮在历史里前后移动。
 var _rollback := RollbackBuffer.new(ROLLBACK_CAPACITY)
@@ -137,12 +154,22 @@ func _ready() -> void:
 	records.chapter_requested.connect(_on_chapter_requested)
 	title.records_requested.connect(func() -> void: records.present())
 
+	# 视频鉴赏的播放器。加在 records 之后 —— 它是「盖在鉴赏网格上」的查看器，
+	# 而鉴赏面板是 tscn 里更早的子节点，所以绘制顺序天然正确。
+	video_viewer = VideoViewer.new()
+	video_viewer.name = "VideoViewer"
+	ui_layer.add_child(video_viewer)
+	gallery.video_activated.connect(_on_video_activated)
+
 	# 模态面板打开时把全屏特效收起来。特效层在 UI 之上，不收的话面板会跟着
 	# 一起扭曲 —— 玩家正在读的那一屏恰恰最不该糊。挂在各个面板的
 	# visibility_changed 上而不是每个开关处各写一行：面板有一堆入口
 	# （按钮 / 快捷键 / 标题界面 / 剧本），漏一处就是一个「面板糊了」的 bug。
-	for panel in [backlog, settings, save_load, gallery, cg_viewer, title, records]:
+	for panel in [backlog, settings, save_load, gallery, cg_viewer, title, records, video_viewer]:
 		(panel as CanvasItem).visibility_changed.connect(_refresh_fx_suspension)
+
+	# 标题音乐改了要立刻生效（玩家可能就停在标题界面改设置）
+	ConfigManager.config_changed.connect(_on_config_changed)
 
 	# 调试控制台只在 debug 构建里建出来 —— 导出版本不该带这个后门。
 	# setup 必须在 add_child 之前调用，否则 _ready 里拿不到 main 引用。
@@ -178,16 +205,23 @@ func _process(_delta: float) -> void:
 		if now >= _skip_next_ms and runner.is_waiting_say():
 			if _may_skip_current():
 				_skip_next_ms = now + SKIP_INTERVAL_MS
-				dialogue.complete_typing()
+				# silent=true：快进时不要把整句的 [fx=…] 一次性全放出来（会是一团噪音）
+				dialogue.complete_typing(true)
 				runner.advance()
 			else:
 				# 撞上没看过的内容，自动停下来 —— 这是「跳过已读」的核心行为
 				_set_skip_mode(false)
 		return
 	if _auto_mode and _auto_deadline_ms > 0 and Time.get_ticks_msec() >= _auto_deadline_ms:
+		# 这一句配了语音、而且还没念完 → 再等一会儿。
+		# 不等的话自动播放会在半句话上跳走，玩家听到一半就被切掉
+		# （语音长度和文本长度没关系，估算不出来，只能真的问一下）。
+		if bool(ConfigManager.get_value("auto_wait_voice", true)) and AudioManager.is_voice_active():
+			_auto_deadline_ms = Time.get_ticks_msec() + VOICE_POLL_MS
+			return
 		_auto_deadline_ms = 0
 		if runner.is_waiting_say():
-			dialogue.complete_typing()
+			dialogue.complete_typing(true)
 			runner.advance()
 
 
@@ -298,13 +332,14 @@ func _on_stage_command(cmd: Dictionary) -> void:
 		"show":
 			stage.show_char(String(cmd.get("char", "")), String(cmd.get("expr", "normal")),
 				String(cmd.get("at", "center")), String(cmd.get("transition", "fade")),
-				float(cmd.get("duration", 0.3)))
+				float(cmd.get("duration", 0.3)), _char_opts(cmd))
 		"hide":
 			stage.hide_char(String(cmd.get("char", "")),
 				String(cmd.get("transition", "fade")), float(cmd.get("duration", 0.3)))
 		"move":
-			stage.move_char(String(cmd.get("char", "")), String(cmd.get("at", "center")),
-				float(cmd.get("duration", 0.35)), String(cmd.get("ease", Stage.DEFAULT_EASE)))
+			stage.move_char(String(cmd.get("char", "")), String(cmd.get("at", "")),
+				float(cmd.get("duration", 0.35)), String(cmd.get("ease", Stage.DEFAULT_EASE)),
+				_char_opts(cmd))
 		"hop":
 			stage.char_jump(String(cmd.get("char", "")), float(cmd.get("height", 40.0)),
 				int(cmd.get("times", 2)), float(cmd.get("duration", 0.7)))
@@ -361,6 +396,19 @@ func _on_stage_command(cmd: Dictionary) -> void:
 			video.clear()
 
 
+## 从舞台指令里取出立绘的「绝对定位 / 基准缩放」三个可选参数。
+##
+## 只在指令真的带了它们时才放进字典 —— Stage 靠「键在不在」区分
+## 「覆盖」与「不覆盖」。塞一堆默认值进去，会让 `show alice at=left`
+## 变成「显式把 x/y 覆盖成默认」，把预设定位的逻辑搞乱。
+func _char_opts(cmd: Dictionary) -> Dictionary:
+	var opts := {}
+	for key in ["x", "y", "scale"]:
+		if cmd.has(key):
+			opts[key] = float(cmd[key])
+	return opts
+
+
 ## 播放视频。图层 / 位置 / 尺寸都由指令参数决定。
 ##
 ## 素材缺失时**不能静默失败**：剧本写了 `video xxx wait=true`，如果播不出来
@@ -402,7 +450,8 @@ func _on_video_finished(_id: String) -> void:
 func _refresh_fx_suspension() -> void:
 	screen_fx.set_suspended(
 		backlog.visible or settings.visible or save_load.visible
-		or gallery.visible or cg_viewer.visible or title.visible or records.visible)
+		or gallery.visible or cg_viewer.visible or title.visible or records.visible
+		or video_viewer.visible)
 
 
 ## 全屏震动时同时震 UI 层。
@@ -466,6 +515,17 @@ func _on_audio_command(cmd: Dictionary) -> void:
 			var chained := not _pending_voice.is_empty()
 			_pending_voice = voice_id
 			AudioManager.play_voice(voice_id, float(cmd.get("volume", 1.0)), chained)
+		"audio_fx":
+			# 音轨效果器。duration 由解析器兜了默认值（AudioFxSpec.DEFAULT_DURATION），
+			# 所以这里直接用；0 表示持续到显式 off。
+			AudioManager.apply_audio_fx(
+				String(cmd.get("track", "all")),
+				String(cmd.get("kind", "glitch")),
+				{
+					"duration": float(cmd.get("duration", AudioFxSpec.DEFAULT_DURATION)),
+					"strength": float(cmd.get("strength", 1.0)),
+					"pitch": float(cmd.get("pitch", 1.0)),
+				})
 
 
 func _on_say(speaker: String, text: String, _expr: String) -> void:
@@ -556,6 +616,10 @@ func _on_script_ended(ending_id: String, ending_title: String) -> void:
 		GameManager.set_flag("ending_%s" % ending_id)
 		# 计入结局收藏。id 必须全局唯一 —— 两个结局用同一个 id 会互相覆盖。
 		CollectionManager.unlock("endings", ending_id)
+		# 计入多周目：通关次数 +1，并把剧本 carry 标记过的状态快照下来，
+		# 供下一周目开局继承。放在这里而不是「开新游戏」时取值 ——
+		# 那时 GameManager 已经被 reset_run() 清空了，取不到任何东西。
+		CycleManager.record_ending(ending_id)
 		RouteTracker.save_now()
 
 	var message := I18n.t("—— 完 ——")
@@ -583,7 +647,9 @@ func _on_advance_requested() -> void:
 	if runner.is_ended():
 		_back_to_title()
 		return
-	if dialogue.complete_typing():
+	# 对话框自己决定这次点击怎么用：停在停顿点上 → 放行；正在打字 → 快进到
+	# 下一个停顿点（没有就补完整句）。它没消化掉（已经打完）才推进剧本。
+	if dialogue.advance_typing():
 		return
 	runner.advance()
 
@@ -696,7 +762,8 @@ func _apply_snapshot(snapshot: Dictionary) -> void:
 	if not runner.is_waiting_choice():
 		choices.dismiss()
 	# 回滚是「重看已经发生过的东西」，再走一遍打字机只会让人干等 —— 直接给全。
-	dialogue.complete_typing()
+	# silent=true：重看时不该把这一句的效果器又炸一遍。
+	dialogue.complete_typing(true)
 
 
 ## 调试控制台 / 测试用：清空回滚历史。
@@ -747,21 +814,42 @@ func _clear_minigame() -> void:
 func _on_gallery_requested() -> void:
 	if _replay_active:
 		return
+	_bgm_before_gallery = AudioManager.get_bgm_id()
+	_preview_started = false
 	gallery.present(GalleryPanel.TAB_CG)
 
 
 func _on_gallery_closed() -> void:
-	# 鉴赏面板里试听的曲子，关掉面板后不该继续响
-	if title.visible:
-		AudioManager.stop_bgm(0.6)
+	var resume_id := _bgm_before_gallery
+	var had_preview := _preview_started
+	_bgm_before_gallery = ""
+	_preview_started = false
+	# 没试听过 → 音频没被动过，别去动它
+	if not had_preview:
+		return
+	# 试听过 → 停掉试听曲，再把剧本原来那首放回去。
+	# 不能「试听的和原来那首一样就让它接着放」：试听流是不循环的，放完就静音，
+	# 剧本会从此没有 BGM。统一重放一次最稳。
+	AudioManager.stop_bgm(0.4)
+	if not resume_id.is_empty():
+		AudioManager.play_bgm(resume_id, 0.8, 0.8)
 
 
 func _on_cg_activated(cg_id: String) -> void:
 	cg_viewer.present(cg_id)
 
 
+## 点了视频鉴赏里的一张卡片 → 打开播放器。
+## 播放器自己负责暂停 BGM / 找素材 / 素材缺失时给提示。
+func _on_video_activated(video_id: String) -> void:
+	video_viewer.present(video_id)
+
+
 func _on_music_track_selected(id: String) -> void:
-	AudioManager.play_bgm(id, 0.8, 0.4)
+	_preview_started = true
+	# loop = false：鉴赏要能听到「这首放完了」，界面据此决定单曲重播还是切下一首。
+	# 剧本 BGM 一律循环，走不到这条路上来。
+	AudioManager.play_bgm(id, 0.8, 0.4, false)
 
 
 func _on_cg_replay_requested(cg_id: String) -> void:
@@ -795,6 +883,7 @@ func _on_cg_replay_requested(cg_id: String) -> void:
 	cg_viewer.hide_panel()
 	gallery.hide_panel()
 	title.visible = false
+	_stop_title_bgm()
 	hud.visible = false
 	choices.dismiss()
 	dialogue.hide_box()
@@ -828,6 +917,7 @@ func _end_replay() -> void:
 	hud.visible = false
 	title.visible = true
 	title.set_save_available(SaveManager.newest_slot() >= 0)
+	title.set_cycle_info(CycleManager.get_cycle(), CycleManager.total_clears())
 
 	# 回到 CG 详情页，玩家可以再播一次或直接关闭
 	gallery.present(GalleryPanel.TAB_CG)
@@ -848,6 +938,9 @@ func _show_title() -> void:
 	video_layer.offset = Vector2.ZERO
 
 	title.set_save_available(SaveManager.newest_slot() >= 0)
+	# 标题界面上的周目提示：一周目且没通关过时整个标签是隐藏的 ——
+	# 首次游玩的玩家不需要知道「周目」这个概念。
+	title.set_cycle_info(CycleManager.get_cycle(), CycleManager.total_clears())
 	title.visible = true
 	hud.visible = false
 	dialogue.hide_box()
@@ -857,6 +950,39 @@ func _show_title() -> void:
 	# 会一直糊在标题界面上，看起来像游戏坏了。
 	screen_fx.clear()
 	video.clear()
+	# 音轨上的效果器同理：读档 / 回标题之后还挂着「故障」就太吓人了
+	AudioManager.clear_all_audio_fx()
+	_apply_title_bgm()
+
+
+## 标题界面 BGM：配置里选了曲子才放，没选就把当前 BGM 停掉 ——
+## 从游戏里退回标题时，剧本那首还在响，不停就变成「标题放着游戏里的曲子」。
+##
+## 注意它走的是 `play_bgm`，所以**不会**因为「标题放了一遍」而解锁什么 ——
+## 能选到的曲子本来就已解锁。
+func _apply_title_bgm() -> void:
+	_title_bgm_id = String(ConfigManager.get_value("title_bgm", "")).strip_edges()
+	if _title_bgm_id.is_empty():
+		AudioManager.stop_bgm(1.2)
+		return
+	AudioManager.play_bgm(_title_bgm_id, 0.8, 1.2)
+
+
+## 离开标题时把标题 BGM 停掉。剧本第一句之前标题那首还在响，不停会两首叠着。
+func _stop_title_bgm() -> void:
+	if _title_bgm_id.is_empty():
+		return
+	_title_bgm_id = ""
+	AudioManager.stop_bgm(0.8)
+
+
+## 设置里改了标题音乐 → 如果此刻正停在标题界面，立刻换。
+func _on_config_changed(key: String, _value: Variant) -> void:
+	if key != "title_bgm":
+		return
+	if title == null or not title.visible:
+		return
+	_apply_title_bgm()
 
 
 func _back_to_title() -> void:
@@ -873,8 +999,11 @@ func _back_to_title() -> void:
 	_show_title()
 
 
-func _on_start_requested(file: String = "", label: String = "") -> void:
+func _on_start_requested(file: String = "", label: String = "", advance_cycle: bool = true) -> void:
 	GameManager.reset_run()
+	# 顺序要紧：先把这一周目的软状态清干净，再把「跨周目继承」写回去。
+	# 反过来的话 reset_run() 会把刚继承来的旗标 / 好感度一起清掉。
+	CycleManager.begin_new_run(advance_cycle)
 	stage.clear()
 	screen_fx.clear()
 	video.clear()
@@ -888,10 +1017,13 @@ func _on_start_requested(file: String = "", label: String = "") -> void:
 	_start_script(label, file)
 
 
-## 章节选择：从指定剧本文件的指定标签开始
+## 章节选择：从指定剧本文件的指定标签开始。
+##
+## 它是「跳到某一章重玩」，不是「开新周目」—— 所以不推进周目数，
+## 但会沿用当前周目的继承状态（这样二周目跳章节也是二周目的状态）。
 func _on_chapter_requested(file: String, label: String) -> void:
 	records.hide_panel()
-	_on_start_requested(file, label)
+	_on_start_requested(file, label, false)
 
 
 func _on_continue_requested() -> void:
@@ -907,6 +1039,7 @@ func _on_load_requested() -> void:
 
 
 func _start_script(label: String = "", file: String = "") -> void:
+	_stop_title_bgm()
 	var target := file if not file.is_empty() else ScriptPaths.entry()
 	if not runner.load_script(target):
 		title.visible = false
@@ -980,6 +1113,10 @@ func _build_payload() -> Dictionary:
 		"runner": runner.get_state(),
 		"stage": stage.get_state(),
 		"backlog": _backlog_entries.slice(tail_start),
+		# 存档只带「当前周目」这一个跨周目字段 —— 通关记录与继承数据留在
+		# user://cycle.json 里，和 CG 收藏 / 已读记录一样属于这台机器的长期记忆，
+		# 读一份旧档不该把它们抹掉。
+		"cycle": CycleManager.to_save_dict(),
 	}
 
 
@@ -1018,10 +1155,15 @@ func _load_slot(slot: int) -> void:
 	if data.is_empty():
 		return
 
+	_stop_title_bgm()
 	_stop_auto_features()
 	# 读档是一次「跳到别处」——旧的回滚历史全部作废，留着会让滚轮翻到
 	# 读档之前的进度之外
 	_rollback.clear()
+
+	# 还原「这份存档是在第几周目存的」。只动周目数与挂起标记，
+	# 通关记录 / 继承数据不碰（它们不属于某一份存档）。
+	CycleManager.from_save_dict(data.get("cycle", {}))
 
 	_restore_session(
 		data.get("game", {}),
@@ -1089,6 +1231,7 @@ func _open_settings() -> void:
 func _is_modal_open() -> bool:
 	return settings.visible or save_load.visible or backlog.visible \
 		or gallery.visible or cg_viewer.visible or records.visible \
+		or video_viewer.visible \
 		or (debug_console != null and debug_console.visible)
 
 
@@ -1098,7 +1241,10 @@ func _close_modals() -> void:
 	backlog.hide_panel()
 	if records != null:
 		records.hide_panel()
-	# Esc 是「退一层」：先关 CG 详情回到鉴赏网格，再关鉴赏面板
+	# Esc 是「退一层」：先关视频 / CG 详情，再关鉴赏网格，最后才是鉴赏面板
+	if video_viewer.visible:
+		video_viewer.hide_panel()
+		return
 	if cg_viewer.visible:
 		cg_viewer.hide_panel()
 		return
@@ -1206,12 +1352,12 @@ func _style_hud() -> void:
 ## 出现「某一块忘了改、颜色对不上」；这里一处扫完，新加面板只要挂一个
 ## 名叫 Dim 的 ColorRect 就会自动被接管。
 func _apply_scrims() -> void:
-	for panel in [backlog, settings, save_load, gallery, cg_viewer, records]:
+	for panel in [backlog, settings, save_load, gallery, cg_viewer, records, video_viewer]:
 		if panel == null:
 			continue
 		var dim := (panel as Node).get_node_or_null("Dim") as ColorRect
 		if dim == null:
 			continue
-		# 鉴赏 / CG 详情 / 记录是近满屏面板，遮罩只露一圈边，走深一档
+		# 鉴赏 / CG 详情 / 视频查看器 / 记录是近满屏面板，遮罩只露一圈边，走深一档
 		dim.color = UiTheme.scrim_color(panel == gallery or panel == cg_viewer
-			or panel == records)
+			or panel == records or panel == video_viewer)

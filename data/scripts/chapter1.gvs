@@ -69,6 +69,22 @@ cg cg_true_end fade=1.0
 narr 夕阳把两个人的影子拉在一起，很长很长。
 label cg_true_end_end
 hide_cg fade=0.8
+
+# ------------------------------------------------------------ 多周目（NG+）
+# 注意这两行放在 cg_true_end_end **之后**：CG 重播只跑 [cg_true_end, cg_true_end_end)，
+# 写在终点之前的话，玩家在鉴赏里重播这段时会莫名其妙多出一句二周目台词。
+#
+# cleared 查的是「这个结局通关过没有」，所以二周目走到这里它一定是 true。
+if cleared true_end
+    alice@smile: ……奇怪，这句话，我好像对你说过第二遍。
+end
+
+# carry 标记「下一周目要继承什么」。取值发生在抵达结局那一刻 ——
+# 也就是带着这一周目结束时的好感度进下一周目，于是二周目更容易抵达真结局。
+# 想验证继承效果：通关一次后回标题，标题上会写「第 2 周目」，
+# 开局好感度直接就是上一周目的终值（用调试台 `aff alice` 可以看）。
+carry affection alice
+
 unlock cg cg_secret_01
 unlock music theme
 ending true_end "春日的答案"
@@ -79,4 +95,4 @@ ending normal "留到下个春天"
 
 label ending_bad
 alice@normal: ……算了，没什么。
-ending bad "说不出口的话"
+ending bad "说不出口的话" title=bad

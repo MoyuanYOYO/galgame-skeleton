@@ -16,8 +16,12 @@ extends RefCounted
 ##
 ## 指令字典的 op 取值：
 ##     label / say / bg / show / hide / move / expr / clear
-##     bgm / se / wait / wait_click / set / add
+##     bgm / se / wait / wait_click / set / add / carry
 ##     jump / call / return / branch_false / choice / minigame / ending
+##
+## 每条指令都带一个 `line` 键（1 基源码行号），**只有编辑器在用** ——
+## 它靠这个把「第 N 行」映射成指令下标（`ScriptRunner.start_at_line`），
+## 从而实现「从光标那一行精确开始预览」。
 
 ## 解析结果字典的键
 const KEY_OK := "ok"
@@ -34,15 +38,33 @@ const KEYWORDS: PackedStringArray = [
 	"anim",
 	"video", "hide_video",
 	"cg", "hide_cg", "unlock",
-	"bgm", "se", "voice",
+	"bgm", "se", "voice", "audio_fx",
 	"wait", "wait_click", "pause",
 	"set", "add", "sub", "flag", "affection",
+	"carry",
 	"if", "elif", "else", "end",
+	"together",
 	"choice",
 	"minigame",
 	"ending",
 	"chapter",
 	"narr", "narration",
+]
+
+## `together` 块里**只允许**这些指令。
+##
+## 用**允许表**而不是禁止表：以后新增指令时，默认是「不能在 together 里用」——
+## 这个方向安全（顶多提示作者去改，不会静默产生错误语义）。
+##
+## 被排除的是三类：结构 / 流程（`label` `jump` `if` `choice` `ending`…）、
+## 阻塞型（`say` `wait` `wait_click` `minigame` `video wait=true`）、
+## 以及「本来就是异步且不需要等」的 `clear` 之外的杂项。
+const TOGETHER_ALLOWED: PackedStringArray = [
+	"bg", "cg", "hide_cg", "show", "hide", "move", "expr",
+	"hop", "zoom", "shake", "screen_shake", "screen_flash", "screen_fx",
+	"bg_motion", "weather", "anim", "video", "hide_video",
+	"bgm", "se", "voice", "audio_fx",
+	"set", "add", "sub", "flag", "affection", "carry", "unlock",
 ]
 
 
@@ -148,6 +170,8 @@ static func parse_kv(tokens: PackedStringArray, start: int) -> Dictionary:
 ##     not flag <name>
 ##     affection <char> <cmp> <value>
 ##     var <name> <cmp> <value>
+##     cycle <cmp> <n>            当前周目数（多周目）
+##     cleared <结局id>           这个结局通关过没有（多周目）
 ##     <name>                      (裸标识符等价于 flag <name>)
 static func parse_condition(tokens: PackedStringArray, start: int) -> Dictionary:
 	var cond := {"negate": false, "kind": "flag", "name": "", "cmp": "==", "value": null}
@@ -172,6 +196,19 @@ static func parse_condition(tokens: PackedStringArray, start: int) -> Dictionary
 				cond["cmp"] = tokens[i + 2]
 			if i + 3 < tokens.size():
 				cond["value"] = literal(" ".join(tokens.slice(i + 3)))
+		"cycle":
+			# 周目数没有「名字」，只有比较式：if cycle >= 2
+			cond["kind"] = "cycle"
+			cond["name"] = ""
+			if i + 1 < tokens.size():
+				cond["cmp"] = tokens[i + 1]
+			if i + 2 < tokens.size():
+				cond["value"] = literal(tokens[i + 2])
+		"cleared", "clear":
+			# 结局 id 放 name 字段，和 flag 一样；negate 由上面的 not 统一处理
+			cond["kind"] = "cleared"
+			if i + 1 < tokens.size():
+				cond["name"] = tokens[i + 1]
 		_:
 			cond["kind"] = "flag"
 			cond["name"] = head
@@ -191,9 +228,28 @@ class Builder extends RefCounted:
 	var source: String = "<inline>"
 	var line_no: int = 0
 	var _line: String = ""
+	## `together` 块栈。元素 `{cmd: 顶层指令下标, body: 块内指令数组}`
+	## —— 块内的指令**不进顶层** `commands`，而是塞进 body，
+	## 由 `together` 那一条指令带着一起执行。
+	var _together: Array = []
 
 	func error(msg: String) -> void:
 		errors.append("%s:%d: %s" % [source, line_no, msg])
+
+	## 追加一条指令，并盖上**源码行号**。
+	##
+	## 行号是给编辑器用的：编译结果里唯一的定位点是标签，所以「从第 N 行开始预览」
+	## 原本只能退化成「从最近的标签开始」。有了这个键，`ScriptRunner.start_at_line()`
+	## 才能精确落到那一行。**游戏本身不读它**（全部消费方都是 `cmd.get("op")`）。
+	##
+	## ⚠️ 在 `together` 块里时指令进的是块内 body，不是顶层 —— 否则块内那些
+	## 「同时启动」的指令会被顶层顺序执行一遍。
+	func _push(cmd: Dictionary) -> void:
+		cmd["line"] = line_no
+		if not _together.is_empty():
+			((_together.back() as Dictionary)["body"] as Array).append(cmd)
+			return
+		commands.append(cmd)
 
 	func run(text: String) -> void:
 		var raw_lines := text.split("\n")
@@ -234,12 +290,19 @@ class Builder extends RefCounted:
 			_add_option(line)
 			return
 
+		# `together` 块只收「非阻塞的演出 / 音频指令」。这里直接报错而不是静默忽略 ——
+		# 写进去的指令没生效却什么都不说，正是本项目最想避免的那类 bug。
+		if not _together.is_empty() and head != "end" and not TOGETHER_ALLOWED.has(head):
+			error("together 块里不能写 %s（只允许：%s）"
+				% [head, ", ".join(TOGETHER_ALLOWED)])
+			return
+
 		match head:
 			"label": _do_label(tokens)
 			"jump", "goto": _do_jump(tokens, "jump")
-			"call": _do_jump(tokens, "call")
+			"call": _do_call(tokens)
 			"jump_file": _do_jump_file(tokens)
-			"return": commands.append({"op": "return"})
+			"return": _push({"op": "return"})
 			"bg": _do_bg(tokens)
 			"show": _do_show(tokens)
 			"hide": _do_hide(tokens)
@@ -256,24 +319,27 @@ class Builder extends RefCounted:
 			"video": _do_video(tokens)
 			"hide_video": _do_hide_video(tokens)
 			"expr": _do_expr(tokens)
-			"clear": commands.append({"op": "clear"})
+			"clear": _push({"op": "clear"})
 			"cg": _do_cg(tokens)
 			"hide_cg": _do_hide_cg(tokens)
 			"unlock": _do_unlock(tokens)
 			"bgm": _do_bgm(tokens)
 			"se": _do_se(tokens)
 			"voice": _do_voice(tokens)
+			"audio_fx": _do_audio_fx(tokens)
 			"wait": _do_wait(tokens)
-			"wait_click", "pause": commands.append({"op": "wait_click"})
+			"wait_click", "pause": _push({"op": "wait_click"})
 			"set": _do_set(tokens)
 			"add": _do_add(tokens, 1.0)
 			"sub": _do_add(tokens, -1.0)
 			"flag": _do_flag(tokens)
 			"affection": _do_affection(tokens)
+			"carry": _do_carry(tokens)
 			"if": _do_if(tokens)
 			"elif": _do_elif(tokens)
 			"else": _do_else()
 			"end": _do_end()
+			"together": _do_together(tokens)
 			"choice": _do_choice()
 			"minigame": _do_minigame(tokens)
 			"ending": _do_ending(tokens)
@@ -293,7 +359,7 @@ class Builder extends RefCounted:
 		if labels.has(label_name):
 			error("标签重复定义: %s" % label_name)
 		labels[label_name] = commands.size()
-		commands.append({"op": "label", "name": label_name})
+		_push({"op": "label", "name": label_name})
 
 	func _do_jump(tokens: PackedStringArray, op: String) -> void:
 		if tokens.size() < 2:
@@ -302,14 +368,72 @@ class Builder extends RefCounted:
 		var idx := commands.size()
 		# 除了解析后的 target 下标，也把标签名留着 ——
 		# 静态校验（未使用标签 / 悬空跳转）要靠它，运行时用不到
-		commands.append({"op": op, "target": -1, "label": tokens[1]})
+		_push({"op": op, "target": -1, "label": tokens[1]})
 		pending.append({"cmd": idx, "label": tokens[1]})
+
+	## 调用子过程，可带参数。
+	##
+	##   call 打招呼
+	##   call 打招呼 who=alice count=2        具名参数 → 子过程里写 {$who} / {$count}
+	##   call 打招呼 alice 2                  位置参数 → 子过程里写 {$1} / {$2}
+	##
+	## 参数在子过程里**作用域是局部的**（进调用栈，`return` 时一并弹掉），
+	## 所以同名参数在嵌套调用里不会互相串味；查找是「内层优先」。
+	##
+	## 具名与位置两种写法可以混用（`call f who=alice 2`），插值时先查具名再查位置。
+	func _do_call(tokens: PackedStringArray) -> void:
+		if tokens.size() < 2:
+			error("call 缺少目标标签")
+			return
+		var args: Array = []
+		for i in range(2, tokens.size()):
+			if not tokens[i].contains("="):
+				args.append(GvsParser.literal(tokens[i]))
+		var idx := commands.size()
+		_push({
+			"op": "call",
+			"target": -1,
+			"label": tokens[1],
+			"params": GvsParser.parse_kv(tokens, 2),
+			"args": args,
+		})
+		pending.append({"cmd": idx, "label": tokens[1]})
+
+	## 演出并行组：块内指令**同时启动**，块结束等最长的那条跑完。
+	##
+	##   together
+	##       bg rooftop type=dissolve fade=1.2
+	##       show alice transition=slide_left fade=1.0
+	##       bgm sunset fade=1.5
+	##   end
+	##
+	## 为什么需要它：GVS 的演出指令本来就是「启动即返回」（Tween 在后台跑），
+	## 所以「同时发生」不用特别支持；真正缺的是**「等这一组都跑完再继续」** ——
+	## 以前只能手写一个 `wait`，而那个数字要跟着每个 duration 一起改，非常脆。
+	##
+	## 可选的 `duration=` 覆盖「等多久」。**不写是 -1，写 0 是「只启动、不等」** ——
+	## 用 -1 当哨兵是为了区分「没写」与「显式写了 0」，两者语义完全不同。
+	func _do_together(tokens: PackedStringArray) -> void:
+		if not _together.is_empty():
+			error("together 不能嵌套")
+			return
+		var kv := GvsParser.parse_kv(tokens, 1)
+		var body: Array = []
+		var cmd := {
+			"op": "together",
+			"body": body,
+			"duration": float(kv.get("duration", -1.0)),
+		}
+		_push(cmd)          # 此时栈还是空的 → 进顶层
+		_together.append({"body": body})
+		blocks.append({"kind": "together", "line": line_no,
+			"branch": commands.size() - 1})
 
 	func _do_jump_file(tokens: PackedStringArray) -> void:
 		if tokens.size() < 2:
 			error("jump_file 需要 <剧本路径> [标签]")
 			return
-		commands.append({
+		_push({
 			"op": "jump_file",
 			"file": tokens[1],
 			"label": tokens[2] if tokens.size() > 2 else "",
@@ -322,24 +446,43 @@ class Builder extends RefCounted:
 		var value := true
 		if tokens.size() > 2:
 			value = bool(GvsParser.literal(tokens[2]))
-		commands.append({"op": "flag", "name": tokens[1], "value": value})
+		_push({"op": "flag", "name": tokens[1], "value": value})
 
 	func _do_affection(tokens: PackedStringArray) -> void:
 		if tokens.size() < 3:
 			error("affection 需要 <角色> <增减值>")
 			return
-		commands.append({
+		_push({
 			"op": "affection",
 			"char": tokens[1],
 			"amount": float(tokens[2].to_float()),
 		})
+
+	## 标记一个「跨周目继承」的状态。
+	##
+	##   carry flag <旗标名>        下一周目保留这个旗标
+	##   carry var <变量名>         下一周目保留这个变量
+	##   carry affection <角色 id>  下一周目保留这个角色的好感度
+	##
+	## 只是**打标记**，取值发生在抵达结局的那一刻（见 CycleManager.record_ending），
+	## 所以作者把它写在剧本哪一行都不影响结果 —— 继承的永远是「这一周目结束时」的值。
+	func _do_carry(tokens: PackedStringArray) -> void:
+		if tokens.size() < 3:
+			error("carry 需要 <类型> <名字>，例如 carry flag met_alice / carry var hp / carry affection alice")
+			return
+		var kind := String(tokens[1])
+		if not CycleManager.CARRY_KINDS.has(kind):
+			error("carry 未知类型 %s（可用：%s）"
+				% [kind, ", ".join(CycleManager.CARRY_KINDS)])
+			return
+		_push({"op": "carry", "kind": kind, "name": tokens[2]})
 
 	func _do_bg(tokens: PackedStringArray) -> void:
 		if tokens.size() < 2:
 			error("bg 缺少背景 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "bg",
 			"id": tokens[1],
 			"transition": String(kv.get("type", "fade")),
@@ -351,21 +494,30 @@ class Builder extends RefCounted:
 			error("show 缺少角色 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		var cmd := {
 			"op": "show",
 			"char": tokens[1],
 			"expr": String(kv.get("expr", "normal")),
 			"at": String(kv.get("at", "center")),
 			"transition": String(kv.get("type", "fade")),
 			"duration": float(kv.get("fade", 0.3)),
-		})
+		}
+		# 绝对定位 / 基准缩放只在真的写了才带上。「没写」与「写了默认值」
+		# 在下游必须是同一件事 —— 下游靠「键在不在」决定要不要覆盖。
+		if kv.has("x"):
+			cmd["x"] = float(kv["x"])
+		if kv.has("y"):
+			cmd["y"] = float(kv["y"])
+		if kv.has("scale"):
+			cmd["scale"] = float(kv["scale"])
+		_push(cmd)
 
 	func _do_hide(tokens: PackedStringArray) -> void:
 		if tokens.size() < 2:
 			error("hide 缺少角色 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "hide",
 			"char": tokens[1],
 			"transition": String(kv.get("type", "fade")),
@@ -374,23 +526,38 @@ class Builder extends RefCounted:
 
 	func _do_move(tokens: PackedStringArray) -> void:
 		if tokens.size() < 3:
-			error("move 需要 <角色> <位置>")
+			error("move 需要 <角色> <位置>（或用 x= / y= 指定坐标）")
 			return
-		var kv := GvsParser.parse_kv(tokens, 3)
-		commands.append({
+		# 第二个词若带 '='，那它就是参数（x= / y= / duration= …）而不是位置关键字。
+		# 于是 `move alice center` 与 `move alice x=960 y=1100` 都能写，
+		# 后者 at 留空 = 不动预设，只覆盖坐标。
+		var kv_start := 2
+		var at := ""
+		if not tokens[2].contains("="):
+			at = tokens[2]
+			kv_start = 3
+		var kv := GvsParser.parse_kv(tokens, kv_start)
+		var cmd := {
 			"op": "move",
 			"char": tokens[1],
-			"at": tokens[2],
+			"at": at,
 			"duration": float(kv.get("fade", 0.35)),
 			"ease": String(kv.get("ease", "out_cubic")),
-		})
+		}
+		if kv.has("x"):
+			cmd["x"] = float(kv["x"])
+		if kv.has("y"):
+			cmd["y"] = float(kv["y"])
+		if kv.has("scale"):
+			cmd["scale"] = float(kv["scale"])
+		_push(cmd)
 
 	func _do_expr(tokens: PackedStringArray) -> void:
 		if tokens.size() < 3:
 			error("expr 需要 <角色> <表情>")
 			return
 		var kv := GvsParser.parse_kv(tokens, 3)
-		commands.append({
+		_push({
 			"op": "expr",
 			"char": tokens[1],
 			"expr": tokens[2],
@@ -403,7 +570,7 @@ class Builder extends RefCounted:
 			error("hop 缺少角色 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "hop",
 			"char": tokens[1],
 			"height": float(kv.get("height", 40.0)),
@@ -417,7 +584,7 @@ class Builder extends RefCounted:
 			error("zoom 需要 <角色> <倍数>")
 			return
 		var kv := GvsParser.parse_kv(tokens, 3)
-		commands.append({
+		_push({
 			"op": "zoom",
 			"char": tokens[1],
 			"scale": float(tokens[2].to_float()),
@@ -431,7 +598,7 @@ class Builder extends RefCounted:
 			error("shake 缺少角色 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "shake",
 			"char": tokens[1],
 			"strength": float(kv.get("strength", 28.0)),
@@ -442,7 +609,7 @@ class Builder extends RefCounted:
 	## 全屏震动 —— 背景 / 立绘 / CG / UI 一起动
 	func _do_screen_shake(tokens: PackedStringArray) -> void:
 		var kv := GvsParser.parse_kv(tokens, 1)
-		commands.append({
+		_push({
 			"op": "screen_shake",
 			"strength": float(kv.get("strength", 36.0)),
 			"times": int(kv.get("times", 5)),
@@ -452,7 +619,7 @@ class Builder extends RefCounted:
 	## 全屏闪光
 	func _do_screen_flash(tokens: PackedStringArray) -> void:
 		var kv := GvsParser.parse_kv(tokens, 1)
-		commands.append({
+		_push({
 			"op": "screen_flash",
 			"color": String(kv.get("color", "#ffffff")),
 			"duration": float(kv.get("duration", 0.25)),
@@ -475,7 +642,7 @@ class Builder extends RefCounted:
 			error("screen_fx 未知类型 %s（可用：%s）" % [kind, ScreenFxSpec.list_text()])
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "screen_fx",
 			"kind": kind,
 			"strength": float(kv.get("strength", 1.0)),
@@ -485,7 +652,7 @@ class Builder extends RefCounted:
 	## 背景运镜（Ken Burns）：缓慢缩放 / 平移，让静止的背景「活」起来
 	func _do_bg_motion(tokens: PackedStringArray) -> void:
 		var kv := GvsParser.parse_kv(tokens, 1)
-		commands.append({
+		_push({
 			"op": "bg_motion",
 			"scale": float(kv.get("scale", 1.0)),
 			"x": float(kv.get("x", 0.0)),
@@ -500,7 +667,7 @@ class Builder extends RefCounted:
 			error("weather 缺少类型（none / rain / snow / sakura）")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "weather",
 			"kind": tokens[1],
 			"intensity": float(kv.get("intensity", 1.0)),
@@ -518,7 +685,7 @@ class Builder extends RefCounted:
 			error("anim 缺少角色 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "anim",
 			"char": tokens[1],
 			"speed": float(kv.get("speed", 1.0)),
@@ -544,7 +711,12 @@ class Builder extends RefCounted:
 			error("video 未知图层 %s（可用：%s）"
 				% [layer, ", ".join(VideoScreen.LAYERS)])
 			return
-		commands.append({
+		# together 里不能用 wait=true：那个等待态会被块自己的等待覆盖掉，
+		# 表现为「写了 wait 却没等」—— 静默失效，所以直接报错。
+		if not _together.is_empty() and bool(kv.get("wait", false)):
+			error("together 块里的 video 不能用 wait=true（块结束会等最长的那条）")
+			return
+		_push({
 			"op": "video",
 			"id": tokens[1],
 			"at": String(kv.get("at", "full")),
@@ -562,7 +734,7 @@ class Builder extends RefCounted:
 	## 收掉视频（淡出）
 	func _do_hide_video(tokens: PackedStringArray) -> void:
 		var kv := GvsParser.parse_kv(tokens, 1)
-		commands.append({
+		_push({
 			"op": "hide_video",
 			"fade": float(kv.get("fade", 0.3)),
 		})
@@ -573,7 +745,7 @@ class Builder extends RefCounted:
 			error("cg 缺少 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "cg",
 			"id": tokens[1],
 			"fade": float(kv.get("fade", 0.5)),
@@ -583,7 +755,7 @@ class Builder extends RefCounted:
 	## 收掉全屏 CG。支持 type= 指定退场转场（遮罩会反向走一遍）
 	func _do_hide_cg(tokens: PackedStringArray) -> void:
 		var kv := GvsParser.parse_kv(tokens, 1)
-		commands.append({
+		_push({
 			"op": "hide_cg",
 			"fade": float(kv.get("fade", 0.4)),
 			"transition": String(kv.get("type", "fade")),
@@ -594,7 +766,7 @@ class Builder extends RefCounted:
 		if tokens.size() < 3:
 			error("unlock 需要 <类型> <id>，例如 unlock music theme")
 			return
-		commands.append({
+		_push({
 			"op": "unlock",
 			"type": tokens[1],
 			"id": tokens[2],
@@ -605,7 +777,7 @@ class Builder extends RefCounted:
 			error("bgm 缺少音频 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "bgm",
 			"id": tokens[1],
 			"volume": float(kv.get("volume", 0.8)),
@@ -617,7 +789,7 @@ class Builder extends RefCounted:
 			error("se 缺少音频 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "se",
 			"id": tokens[1],
 			"volume": float(kv.get("volume", 1.0)),
@@ -630,17 +802,57 @@ class Builder extends RefCounted:
 			error("voice 缺少语音 id")
 			return
 		var kv := GvsParser.parse_kv(tokens, 2)
-		commands.append({
+		_push({
 			"op": "voice",
 			"id": tokens[1],
 			"volume": float(kv.get("volume", 1.0)),
+		})
+
+	## 给某条音轨挂 / 清音频效果器。
+	##
+	##   audio_fx bgm glitch                       默认 0.8 秒后自动清除
+	##   audio_fx voice pitch pitch=1.6            移调（变尖 / 变沉）
+	##   audio_fx bgm distortion duration=2 strength=1.5
+	##   audio_fx all off                          清掉所有音轨上我们加的效果器
+	##
+	## 音轨与效果器的清单都在 `AudioFxSpec`（解析器 / 运行时 / 编辑器共用一份）。
+	##
+	## 未知音轨 / 未知效果器**直接报错**，不像 weather 那样静默降级成 none：
+	## 两个都是封闭的小集合，写错基本只有「拼错」一种可能，而静默降级的后果是
+	## 「剧本写了、演出不出来」—— 正是本项目最想避免的那类 bug
+	## （tools/audit 会把这条错误变成 CI 的非零退出码）。
+	##
+	## 想在**文字显示的中间**触发，用台词里的内联标签 `[fx=glitch bus=bgm]`，
+	## 不走这条指令。
+	func _do_audio_fx(tokens: PackedStringArray) -> void:
+		if tokens.size() < 2:
+			error("audio_fx 需要 <音轨> [效果]，音轨：%s" % AudioFxSpec.tracks_text())
+			return
+		var track := String(tokens[1]).strip_edges().to_lower()
+		if not AudioFxSpec.is_valid_track(track):
+			error("audio_fx 未知音轨 %s（可用：%s）" % [track, AudioFxSpec.tracks_text()])
+			return
+		var kind := "glitch"
+		if tokens.size() > 2:
+			kind = String(tokens[2]).strip_edges().to_lower()
+		if not AudioFxSpec.is_valid_kind(kind):
+			error("audio_fx 未知效果器 %s（可用：%s）" % [kind, AudioFxSpec.list_text()])
+			return
+		var kv := GvsParser.parse_kv(tokens, 3)
+		_push({
+			"op": "audio_fx",
+			"track": track,
+			"kind": kind,
+			"duration": float(kv.get("duration", AudioFxSpec.DEFAULT_DURATION)),
+			"strength": float(kv.get("strength", 1.0)),
+			"pitch": float(kv.get("pitch", 1.0)),
 		})
 
 	func _do_wait(tokens: PackedStringArray) -> void:
 		if tokens.size() < 2:
 			error("wait 缺少秒数")
 			return
-		commands.append({"op": "wait", "duration": maxf(0.0, float(tokens[1].to_float()))})
+		_push({"op": "wait", "duration": maxf(0.0, float(tokens[1].to_float()))})
 
 	## 同时接受 `set <变量> <值>` 和 `set var <变量> <值>` 两种写法
 	func _do_set(tokens: PackedStringArray) -> void:
@@ -648,7 +860,7 @@ class Builder extends RefCounted:
 		if tokens.size() < start + 2:
 			error("set 需要 <变量> <值>")
 			return
-		commands.append({
+		_push({
 			"op": "set",
 			"name": tokens[start],
 			"value": GvsParser.literal(" ".join(tokens.slice(start + 1))),
@@ -659,7 +871,7 @@ class Builder extends RefCounted:
 		if tokens.size() < start + 2:
 			error("add/sub 需要 <变量> <数值>")
 			return
-		commands.append({
+		_push({
 			"op": "add",
 			"name": tokens[start],
 			"amount": sign * float(tokens[start + 1].to_float()),
@@ -673,7 +885,7 @@ class Builder extends RefCounted:
 
 	func _do_if(tokens: PackedStringArray) -> void:
 		var idx := commands.size()
-		commands.append({
+		_push({
 			"op": "branch_false",
 			"cond": GvsParser.parse_condition(tokens, 1),
 			"target": -1,
@@ -686,11 +898,11 @@ class Builder extends RefCounted:
 			return
 		var top: Dictionary = blocks.back()
 		var jump_idx := commands.size()
-		commands.append({"op": "jump", "target": -1})
+		_push({"op": "jump", "target": -1})
 		top["ends"].append(jump_idx)
 		commands[top["branch"]]["target"] = commands.size()
 		var idx := commands.size()
-		commands.append({
+		_push({
 			"op": "branch_false",
 			"cond": GvsParser.parse_condition(tokens, 1),
 			"target": -1,
@@ -703,7 +915,7 @@ class Builder extends RefCounted:
 			return
 		var top: Dictionary = blocks.back()
 		var jump_idx := commands.size()
-		commands.append({"op": "jump", "target": -1})
+		_push({"op": "jump", "target": -1})
 		top["ends"].append(jump_idx)
 		commands[top["branch"]]["target"] = commands.size()
 		top["branch"] = -1
@@ -713,6 +925,11 @@ class Builder extends RefCounted:
 			error("多余的 end")
 			return
 		var top: Dictionary = blocks.pop_back()
+		# `together` 块没有跳转要回填，只需要把它自己的 body 收尾
+		if String(top["kind"]) == "together":
+			if not _together.is_empty():
+				_together.pop_back()
+			return
 		var here := commands.size()
 		if String(top["kind"]) == "if":
 			if int(top["branch"]) >= 0:
@@ -730,7 +947,7 @@ class Builder extends RefCounted:
 
 	func _do_choice() -> void:
 		var idx := commands.size()
-		commands.append({"op": "choice", "options": [], "fallthrough": -1})
+		_push({"op": "choice", "options": [], "fallthrough": -1})
 		blocks.append({"kind": "choice", "line": line_no, "branch": idx})
 
 	func _add_option(line: String) -> void:
@@ -743,13 +960,13 @@ class Builder extends RefCounted:
 		var opt_text := GvsParser.unquote(line.substr(0, arrow).strip_edges())
 		var label_part := line.substr(arrow + 2).strip_edges()
 		var opts: Array = cmd["options"]
-		opts.append({"text": opt_text, "label": label_part, "target": -1})
+		opts.append({"text": opt_text, "label": label_part, "target": -1, "line": line_no})
 
 	func _do_minigame(tokens: PackedStringArray) -> void:
 		if tokens.size() < 2:
 			error("minigame 缺少 id")
 			return
-		commands.append({
+		_push({
 			"op": "minigame",
 			"id": tokens[1],
 			"params": GvsParser.parse_kv(tokens, 2),
@@ -762,26 +979,26 @@ class Builder extends RefCounted:
 		var title := ""
 		if tokens.size() > 2:
 			title = GvsParser.unquote(" ".join(tokens.slice(2)))
-		commands.append({"op": "ending", "id": tokens[1], "title": title})
+		_push({"op": "ending", "id": tokens[1], "title": title})
 
 	## 设置当前章节名，会显示在存档槽摘要上
 	func _do_chapter(tokens: PackedStringArray) -> void:
 		if tokens.size() < 2:
 			error("chapter 缺少标题")
 			return
-		commands.append({
+		_push({
 			"op": "chapter",
 			"title": GvsParser.unquote(" ".join(tokens.slice(1))),
 		})
 
 	func _do_narration(line: String) -> void:
 		var body := line.substr(line.find(" ") + 1).strip_edges() if line.contains(" ") else ""
-		commands.append({"op": "say", "speaker": "", "text": GvsParser.unquote(body), "expr": ""})
+		_push({"op": "say", "speaker": "", "text": GvsParser.unquote(body), "expr": ""})
 
 	## 对白行：`角色: 文本`、`角色@表情: 文本`、`"旁白"`
 	func _do_dialogue(line: String) -> void:
 		if line.begins_with("\"") or line.begins_with("'"):
-			commands.append({
+			_push({
 				"op": "say", "speaker": "", "text": GvsParser.unquote(line), "expr": "",
 			})
 			return
@@ -797,9 +1014,9 @@ class Builder extends RefCounted:
 				if at > 0:
 					speaker = prefix.substr(0, at)
 					expr = prefix.substr(at + 1)
-				commands.append({
+				_push({
 					"op": "say", "speaker": speaker, "text": body, "expr": expr,
 				})
 				return
 
-		commands.append({"op": "say", "speaker": "", "text": line, "expr": ""})
+		_push({"op": "say", "speaker": "", "text": line, "expr": ""})

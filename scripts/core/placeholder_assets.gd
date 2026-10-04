@@ -223,6 +223,27 @@ static func sprite_root() -> String:
 	return SPRITE_DIR if sprite_root_override.is_empty() else sprite_root_override
 
 
+## 立绘根目录下的角色 id 列表（= 每个子目录名），已排序。
+##
+## 运行时没有「角色注册表」这种东西，所以设置面板的「角色语音静音」
+## 只能靠扫目录。读不到目录（导出后目录不含已导入资源等）就返回空 ——
+## 调用方要能接受「一个都没有」，不要因此报错。
+static func list_characters() -> PackedStringArray:
+	var out := PackedStringArray()
+	var dir := DirAccess.open(sprite_root())
+	if dir == null:
+		return out
+	dir.list_dir_begin()
+	var name := dir.get_next()
+	while not name.is_empty():
+		if dir.current_is_dir() and not name.begins_with("."):
+			out.append(name)
+		name = dir.get_next()
+	dir.list_dir_end()
+	out.sort()
+	return out
+
+
 static func get_char(char_id: String, expr: String) -> Texture2D:
 	if char_id.is_empty():
 		char_id = "unknown"

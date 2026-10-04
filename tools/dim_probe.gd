@@ -1,9 +1,10 @@
 extends Node
 
-## 终极探针：每行等 0.4s（渐变走完）后核对三件事：
-##   1. 名字牌 speaker 与 modulate 一致性
+## 终极探针：每行等 0.45s（渐变走完）后核对三件事：
+##   1. 名字牌 speaker 与 modulate 一致性（说话人不该被压暗）
 ##   2. alice 材质的 shader 参数（progress/has_from）—— 抓卡住的交叉混合
-##   3. sprite 渲染色 vs 素材文件的分区比值（暗部/中间/亮部）—— 抓渲染变色
+##   3. 渲染色 vs「此刻该有的压暗」—— 既抓「该亮却被压暗」，也抓「该暗却没暗」
+##      （后者 = 材质丢掉了 modulate，即「换过表情后再也不变暗」）
 ##   Godot --path . res://tools/dim_probe.tscn
 
 const MAIN_SCENE := "res://scenes/main.tscn"
@@ -61,11 +62,19 @@ func _ready() -> void:
 			var has_from: bool = mat.get_shader_parameter("has_from")
 			if has_from and prog < 0.99:
 				issues.append("交叉混合卡住 progress=%.2f has_from=%s" % [prog, has_from])
-		# 3. 渲染色 vs 素材（只在 alice 可见时）
-		if stage.is_char_visible("alice"):
+		# 3. 渲染色必须等于「此刻该有的压暗」。同时抓两类，缺一不可：
+		#    · 该亮却被压暗  —— 系统变暗，或材质把顶点色叠了两遍（恒暗 ~40%）
+		#    · 该暗却没暗    —— 材质把 modulate 整个丢掉
+		#    第二类正是「女主换过表情后，男主说话时她不变暗」那个 bug。
+		#    只查说话人那一侧（旧的写法）永远抓不到它。
+		#    CG 在屏（含淡出中）时跳过 —— 那时采到的是 CG 的像素，不是立绘。
+		if stage.is_char_visible("alice") and not stage.is_cg_rendering():
+			var expected := 1.0
+			if not speaker.is_empty() and speaker != "alice":
+				expected = UiTheme.stage_value("dim_inactive", 0.55)
 			var ratio := await _fidelity_ratio(stage)
-			if ratio < 0.85 or ratio > 1.18:
-				issues.append("渲染色偏移 x%.2f" % ratio)
+			if absf(ratio - expected) > 0.12:
+				issues.append("alice 渲染色 x%.2f（期望 %.2f）" % [ratio, expected])
 		# 4. alice 说话的每行都存全屏图 —— x 值有 zoom/COVERED 等干扰，
 		#    最终以肉眼截图为准
 		if speaker == "alice":
@@ -89,36 +98,46 @@ func _alice_material(stage: Stage) -> ShaderMaterial:
 
 ## sprite 渲染色 vs 素材文件的总体比值（立绘不透明区的中位亮度比）。
 ##
-## 掩码映射必须和节点上的 stretch_mode 用同一个模型，否则采样错位、
-## 量出来的全是假信号。立绘节点是 STRETCH_KEEP_ASPECT_CENTERED：
-## 素材等比缩放到「装得进」560×1000（短边贴齐、长边留白居中），
-## 不是 COVERED 的填满裁切 —— 这里以前按 COVERED 算，把比值量成了 1.3+。
-##
-## 注意基准固定用 normal.png：alice 换表情时（smile.png）本来就和 normal
-## 不是同一张图，比值会有内容差异，只适合看「有没有系统性变暗」。
+## 三个容易量成假信号的地方，这里都处理了：
+##   · 映射模型必须和节点上的 stretch_mode 用同一个 —— 立绘是
+##     STRETCH_KEEP_ASPECT_CENTERED（等比装进 560×1000、两边留白居中），
+##     不是 COVERED 的填满裁切（按 COVERED 算会把比值量成 1.3+）；
+##   · 立绘可能被 zoom 放大过，采样矩形要跟着 pivot（脚底中心）一起缩放，
+##     否则放大的立绘会被量成「假变亮」；
+##   · 基准图取节点当前真正在用的那张（含表情差分），不要固定 normal.png ——
+##     换过表情的行会因两张图内容差异量出 1.5 的假偏移。
 func _fidelity_ratio(stage: Stage) -> float:
 	var pos: Vector2 = stage.get_char_position("alice")
 	await RenderingServer.frame_post_draw
 	var img := get_viewport().get_texture().get_image()
 	var vp := Vector2(img.get_width(), img.get_height()) / Vector2(1920.0, 1080.0)
 
-	var spr: Texture2D = load("res://assets/sprites/alice/normal.png")
+	var spr: Texture2D = stage.get_char_texture("alice")
+	if spr == null:
+		return 1.0
 	var spr_img: Image = spr.get_image()
+	if spr_img == null:
+		return 1.0
 	spr_img.convert(Image.FORMAT_RGBA8)
 
-	# KEEP_ASPECT_CENTERED：等比缩放到装得进 rect，两边留白居中
-	var sc := minf(float(Stage.CHAR_WIDTH) / float(spr_img.get_width()),
+	# KEEP_ASPECT_CENTERED：等比缩放到装得进框，两边留白居中
+	var inner := minf(float(Stage.CHAR_WIDTH) / float(spr_img.get_width()),
 		float(Stage.CHAR_HEIGHT) / float(spr_img.get_height()))
-	var draw_w := spr_img.get_width() * sc
-	var draw_h := spr_img.get_height() * sc
-	var off_x := (Stage.CHAR_WIDTH - draw_w) * 0.5
-	var off_y := (Stage.CHAR_HEIGHT - draw_h) * 0.5
+	var off := Vector2((Stage.CHAR_WIDTH - spr_img.get_width() * inner) * 0.5,
+		(Stage.CHAR_HEIGHT - spr_img.get_height() * inner) * 0.5)
+	# 再叠加节点缩放：pivot 在脚底中心，所以屏幕位置 = pos + pivot + (local - pivot) * s
+	var s := stage.get_char_scale("alice")
+	if s <= 0.0:
+		s = 1.0
+	var pivot := Vector2(Stage.CHAR_WIDTH * 0.5, Stage.CHAR_HEIGHT)
+	var top_left := pos + pivot + (off - pivot) * s
+	var draw_size := Vector2(spr_img.get_width(), spr_img.get_height()) * inner * s
 
 	var scaled := spr_img.duplicate() as Image
-	scaled.resize(maxi(1, int(draw_w * vp.x)), maxi(1, int(draw_h * vp.y)),
+	scaled.resize(maxi(1, int(draw_size.x * vp.x)), maxi(1, int(draw_size.y * vp.y)),
 		Image.INTERPOLATE_BILINEAR)
 	spr_img = scaled
-	var shot_pos := Vector2i(((pos.x + off_x) * vp.x), int((pos.y + off_y) * vp.y))
+	var shot_pos := Vector2i(int(top_left.x * vp.x), int(top_left.y * vp.y))
 	var full := Rect2i(Vector2i.ZERO, img.get_size())
 	var px := Rect2i(shot_pos, spr_img.get_size()).intersection(full)
 	if px.size.x <= 0 or px.size.y <= 0:

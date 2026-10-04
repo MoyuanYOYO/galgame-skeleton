@@ -53,7 +53,7 @@ func _ready() -> void:
 	_panel.offset_top = PANEL_MARGIN_Y
 	_panel.offset_right = -PANEL_MARGIN_X
 	_panel.offset_bottom = -PANEL_MARGIN_Y
-	UiTheme.apply_panel(_panel, "default")
+	UiTheme.apply_panel(_panel, "records")
 	add_child(_panel)
 
 	var outer := VBoxContainer.new()
@@ -142,6 +142,7 @@ func _rebuild() -> void:
 		child.queue_free()
 
 	_body.add_child(_make_progress_section())
+	_body.add_child(_make_cycle_section())
 	_body.add_child(_make_chapter_section())
 	_body.add_child(_make_ending_section())
 	_body.add_child(_make_route_section())
@@ -205,6 +206,77 @@ func _make_progress_section() -> Control:
 	clear_row.add_child(clear_button)
 	box.add_child(clear_row)
 	return box
+
+
+## 多周目：当前周目 / 通关次数 / 每个结局抵达过几次
+##
+## 数据全部来自 CycleManager（跨存档、跨周目的「战绩」）。
+## 一周目且没通关过时只显示一行说明 —— 不把「周目」这个概念提前剧透给首周玩家。
+func _make_cycle_section() -> Control:
+	var box := VBoxContainer.new()
+	box.add_theme_constant_override("separation", 10)
+	box.add_child(_make_section_title("多周目"))
+
+	var cycle := CycleManager.get_cycle()
+	var total := CycleManager.total_clears()
+
+	var head := Label.new()
+	head.set_meta(I18n.META_SKIP, true)
+	head.text = I18n.t("第 {cycle} 周目 · 通关 {total} 次 · 解锁 {distinct} 个结局", {
+		"cycle": cycle, "total": total, "distinct": CycleManager.distinct_clears(),
+	})
+	UiTheme.apply_label(head, UiTheme.TEXT, 21)
+	box.add_child(head)
+
+	var summary := CycleManager.clear_summary()
+	if summary.is_empty():
+		box.add_child(_make_hint("还没有通关记录。抵达任意结局后，通关次数与继承数据才会开始累积。"))
+		return box
+
+	for entry in summary:
+		var record: Dictionary = entry
+		var id := String(record.get("id", ""))
+		var item := CollectionRegistry.get_item("endings", id)
+		var title := String(item.get("title", id)) if not item.is_empty() else id
+		var row := Label.new()
+		row.set_meta(I18n.META_SKIP, true)
+		row.text = I18n.t("{title}　×{count}", {
+			"title": title, "count": int(record.get("count", 0)),
+		})
+		UiTheme.apply_label(row, UiTheme.TEXT_DIM, 19)
+		box.add_child(row)
+
+	# 下一周目会继承什么 —— 只在真的有继承数据时显示，
+	# 否则会让人以为「这游戏有继承系统但什么都没继承」。
+	var inherited := CycleManager.inherited_summary()
+	if not inherited.is_empty():
+		var lines: Array = []
+		for kind in inherited.keys():
+			var names: Array = []
+			for name in (inherited[kind] as Dictionary).keys():
+				names.append(String(name))
+			names.sort()
+			lines.append("%s：%s" % [_carry_kind_label(String(kind)), ", ".join(names)])
+		var inherit_label := Label.new()
+		inherit_label.set_meta(I18n.META_SKIP, true)
+		# 占位符必须是 {items} —— I18n.t 只认 {名字}，写成 %s 会原样留在界面上
+		inherit_label.text = I18n.t("下一周目继承　{items}", {"items": "　·　".join(lines)})
+		inherit_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		UiTheme.apply_label(inherit_label, UiTheme.ACCENT, 19)
+		box.add_child(inherit_label)
+
+	return box
+
+
+static func _carry_kind_label(kind: String) -> String:
+	match kind:
+		CycleManager.CARRY_FLAG:
+			return "旗标"
+		CycleManager.CARRY_VAR:
+			return "变量"
+		CycleManager.CARRY_AFFECTION:
+			return "好感度"
+	return kind
 
 
 ## 章节选择

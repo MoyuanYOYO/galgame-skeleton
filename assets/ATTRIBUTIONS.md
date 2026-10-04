@@ -48,6 +48,32 @@
 | `ui_btn_flat/main_*.png` | AI 和纸纸纹 | 程序画奶油底 + 金边 + 四态 |
 | `ui_btn_gold_*.png` | — | 程序画玫红渐变（标题主按钮）+ 四态 |
 
+### v6 水彩绘本套件（面板与对话框，在用）
+
+功能窗口的贴图换成了**按面板尺寸烘焙的整图**（`texture_margin = 0`）。
+来源见 `galgame-ui-styles/`：5 套候选风格的选型页（`index.html`）+ 无头渲染
+出图。项目采用其中 **water**（水彩绘本）一套 —— 米白纸面配暖色樱花教室背景最协调。
+
+| 文件 | 尺寸 | 对应面板 |
+| --- | --- | --- |
+| `ui_backlog_full.png` | 1320×880 | 回看 |
+| `ui_save_load_full.png` | 1080×860 | 存档 / 读档 |
+| `ui_records_full.png` | 1780×960 | 记录 |
+| `ui_gallery_full.png` | 1780×960 | 鉴赏 |
+| `ui_cg_viewer_full.png` | 1800×980 | CG 详情 |
+| `ui_settings_full.png` | 1000×810 | 设置 |
+| `ui_dialogue_full.png` | 1656×305 | 对话框（更早接入，同一个 water 套件） |
+
+**贴图尺寸必须与控件矩形逐像素相等** —— 整图是铺满控件画的，差一个像素就拉伸。
+改面板 `offset_*` 就得重烘焙。细节见 `README.md` 的「换面板美术素材」与 `DESIGN.md` 5.8。
+
+其余四套候选（sakura / violet / navy / parch）留在 `galgame-ui-styles/css-textures/`，
+换皮肤 = 替换上面这 6 个 `ui_<面板>_full.png`。
+
+> v5 的九宫格小图里，`ui_panel_default.png`（`panels.default` / `panels.card` 两个预设）
+> 与 `ui_panel_nameplate.png`（对话框名牌）**仍在用**；`ui_panel_gallery.png` 与
+> `ui_panel_dialogue.png` 已被整图取代，现在无人引用 —— 留档给将来尺寸会浮动的面板备用。
+
 原始生成图（含右下角平台水印，脚本内已裁除 `WM_AVOID=340px`）：
 
 | 生成素材 | 用途 |

@@ -24,13 +24,11 @@ func _ready() -> void:
 	visible = false
 
 	var font_size := GalleryTheme.count("button_font_size", 22)
-	# 内边距不能是 0：这个面板的 stylebox 是自己拼的（不走 apply_panel 的预设），
-	# 之前 pad_h / pad_v 都传了 0 —— CG 图、标题文字和按钮于是全部顶到边框上。
-	var pad_h := GalleryTheme.count("viewer_pad_h", 30)
-	var pad_v := GalleryTheme.count("viewer_pad_v", 26)
-	_panel.add_theme_stylebox_override("panel", UiTheme.stylebox(
-		GalleryTheme.color("panel"), 20, GalleryTheme.color("panel_border"), 1,
-		pad_h, pad_v))
+	# 走 panel_stylebox，别再手写 stylebox —— 这里原来是 UiTheme.stylebox(程序化)，
+	# 后果有两层：一是面板贴图被挡在门外（cg_viewer 的整图一直没生效，只能画圆角矩形），
+	# 二是内边距的来源跟其它功能窗口分了家。现在统一由 panels.cg_viewer 给。
+	# 历史教训：更早那版 pad_h / pad_v 都传 0，CG 图、标题、按钮全顶到边框上。
+	UiTheme.apply_panel(_panel, "cg_viewer", GalleryTheme.color("panel"))
 	_title.add_theme_font_size_override("font_size", 28)
 	_title.add_theme_color_override("font_color", GalleryTheme.color("text"))
 	_hint.add_theme_font_size_override("font_size", font_size - 4)

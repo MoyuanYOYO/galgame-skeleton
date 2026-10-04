@@ -45,9 +45,9 @@ static func _defaults() -> Dictionary:
 			"card_title_font_size": 20,
 			"track_font_size": 20,
 			"button_font_size": 22,
-			# CG 查看器面板的内边距。没这两个值的话面板内容会直接顶到边框上。
-			"viewer_pad_h": 30,
-			"viewer_pad_v": 26,
+			# 曾经还有 viewer_pad_h / viewer_pad_v。CG 查看器改为走
+			# ui_theme.json 的 panels.cg_viewer 预设后，这两个键没人读了 ——
+			# 留着就是「写了却不生效」的死配置，索性删掉。
 		},
 		"text": {
 			"title": "鉴 赏",
@@ -73,18 +73,11 @@ static func _defaults() -> Dictionary:
 			"style": "lock",
 			"size": 58,
 		},
-		"visualizer": {
-			"mode": "both",
-			"disc_radius": 104,
-			"disc_speed": 0.85,
-			"disc_hole_ratio": 0.17,
-			"disc_label_ratio": 0.44,
-			"spectrum_bars": 32,
-			"spectrum_height": 86,
-			"spectrum_gap": 4,
-			"spectrum_scale": 6.0,
-			"spectrum_idle_wave": 0.07,
-		},
+		# 这里原本还有一段 "visualizer"：唱片半径 / 转速 / 频谱条数与缩放。
+		# 音乐鉴赏改成「列表 + 播放器卡片」之后没有任何读取方了 ——
+		# 留着就是「写了却不生效」的死配置，所以整段删掉。
+		# record_disc.gd / spectrum_bars.gd 两个控件仍留在 scripts/ui/ 下
+		# （它们本身是可复用的），将来要接回来时把这段配置一起复原即可。
 	}
 
 
@@ -138,15 +131,6 @@ static func label(key: String, fallback: String = "") -> String:
 	if raw == null:
 		return fallback
 	return String(raw)
-
-
-static func visual(key: String, fallback: Variant = null) -> Variant:
-	_ensure()
-	return section("visualizer").get(key, fallback)
-
-
-static func visualizer_mode() -> String:
-	return String(visual("mode", "both")).to_lower()
 
 
 ## 把所有调色板导出成字典，方便一次性传给子控件

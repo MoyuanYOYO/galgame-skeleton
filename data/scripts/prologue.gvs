@@ -16,9 +16,22 @@ label start
 
 chapter 序章 · 新学期
 
+# ------------------------------------------------------------ 多周目（NG+）
+# cycle 是当前周目数（1 起）。二周目起多一段独白 —— 这是 NG+ 最常见的用法：
+# 同一个场景，玩家因为「已经知道结局」而读出不一样的味道。
+#
+# 可用的两个条件：
+#   if cycle >= 2            周目数比较（== != > < >= <=）
+#   if cleared <结局id>       某个结局通关过没有（跨周目记录）
+#   if not cleared <结局id>   反向写法
+if cycle >= 2
+    narr （——又是四月。这一次，我大概知道该说什么了。）
+end
+
 # --------------------------------------------------- 可重播片段：教室 CG
 label cg_classroom
 bg classroom fade=0.8
+voice <语音> volume=1
 bgm daily volume=0.7 fade=1.5
 cg cg_classroom fade=0.9
 
@@ -34,15 +47,29 @@ narr 这一句[speed=3]三倍速冲过去[/speed]，然后[wait=0.9]停顿一下
 
 show alice expr=normal at=left fade=0.5
 alice: 早上好。
-alice: ……你怎么一副没睡醒的样子。
+alice@normal: ……你怎么一副没睡醒的样子。
 
 show bob expr=normal at=right fade=0.4
 bob: 早。我昨晚把新出的那款游戏打通了。
 alice@smile: 又是游戏。
+show xiaolan expr=normal at=center type=fade fade=0.3
+xiaolan@1: 新台词1
+xiaolan: 新台词
+xiaolan@3: 新台词3
+xiaolan@2: 新台词2
+xiaolan@1: 新台词1
+xiaolan@2: 新台词2
+xiaolan: 新台词
+xiaolan@2: 新台词2
+xiaolan@3: 新台词
+xiaolan@2: 新台词2
+xiaolan@4: 新台词4
+xiaolan: 新台词
+hide xiaolan type=fade fade=0.3
 alice@normal: 你倒是挺有精神的嘛。
 
 # ------------------------------------------- 立绘 / 画面动效演示（整段可删）
-hop bob height=46 times=2 duration=0.8
+hop bob height=46 times=4 duration=0.8
 narr ——兴奋地原地蹦了两下。
 
 zoom bob 1.25 duration=0.5
@@ -168,6 +195,7 @@ end
 
 # ------------------------------------------------------------ 小游戏
 se bell
+alice: 新台词
 narr 上课铃响了。
 alice: 第一节课是随堂小测。
 bob: 别看我，我也没复习。

@@ -29,7 +29,7 @@ var _slot_buttons: Dictionary = {}
 
 func _ready() -> void:
 	visible = false
-	UiTheme.apply_panel(_panel, "default")
+	UiTheme.apply_panel(_panel, "save_load")
 	UiTheme.apply_label(_title_label, UiTheme.TEXT, 30)
 	UiTheme.apply_button(_close_button, "default")
 	_close_button.pressed.connect(hide_panel)

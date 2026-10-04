@@ -16,7 +16,7 @@ const MAX_ENTRIES := 300
 
 func _ready() -> void:
 	visible = false
-	UiTheme.apply_panel(_panel, "default")
+	UiTheme.apply_panel(_panel, "backlog")
 	UiTheme.apply_button(_close_button, "default")
 	_close_button.pressed.connect(hide_panel)
 
@@ -27,11 +27,8 @@ func present(entries: Array) -> void:
 	if tail.size() > MAX_ENTRIES:
 		tail = tail.slice(tail.size() - MAX_ENTRIES)
 
-	# 三个自定义特效都是无状态的（只有一个 bbcode 名字），
-	# 所以整页共用一个实例就够，不必每行都 new 一遍。
-	var effects: Array[RichTextEffect] = [
-		BounceEffect.new(), GlitchEffect.new(), BlinkEffect.new(),
-	]
+	# 特效实例整页共用一份（登记在 TextEffects 里，无状态）
+	var effects: Array[RichTextEffect] = TextEffects.all()
 
 	for e in tail:
 		if typeof(e) != TYPE_DICTIONARY:

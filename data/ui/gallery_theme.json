@@ -29,15 +29,14 @@
 	"tab_font_size": 24,
 	"card_title_font_size": 20,
 	"track_font_size": 20,
-	"button_font_size": 22,
-	"viewer_pad_h": 30,
-	"viewer_pad_v": 26
+	"button_font_size": 22
   },
 
   "text": {
 	"title": "鉴 赏",
 	"tab_cg": "CG 鉴赏",
 	"tab_music": "音乐鉴赏",
+	"tab_video": "视频鉴赏",
 	"locked_label": "???",
 	"locked_hint": "尚未解锁",
 	"empty_hint": "还没有解锁任何内容，去游戏里探索吧。",
@@ -48,11 +47,18 @@
 	"next_button": "下一首",
 	"play_button": "播放",
 	"pause_button": "暂停",
+	"stop_button": "停止",
+	"mode_list_loop": "列表循环",
+	"mode_single_loop": "单曲循环",
+	"mode_shuffle": "随机播放",
+	"mode_once": "顺序播放",
+	"no_track": "—",
 	"now_playing": "正在播放",
 	"not_playing": "未在播放",
 	"paused_label": "已暂停",
 	"progress_label": "CG 收集进度",
-	"music_progress_label": "乐曲收集进度"
+	"music_progress_label": "乐曲收集进度",
+	"video_progress_label": "影片收集进度"
   },
 
   "locked_icon": {

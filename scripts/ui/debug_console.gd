@@ -15,7 +15,7 @@ const MAX_OUTPUT_LINES := 200
 var _main: Node
 var _panel: PanelContainer
 var _output: RichTextLabel
-var _input: LineEdit
+var _query: LineEdit
 var _history: PackedStringArray = []
 var _history_cursor: int = -1
 
@@ -57,13 +57,13 @@ func _ready() -> void:
 	UiTheme.apply_rich_text(_output, UiTheme.TEXT, 18, "dialogue")
 	column.add_child(_output)
 
-	_input = LineEdit.new()
-	_input.placeholder_text = "输入命令，help 查看全部"
-	_input.custom_minimum_size = Vector2(0.0, 40.0)
-	_input.add_theme_color_override("font_color", UiTheme.TEXT)
-	_input.add_theme_font_size_override("font_size", 18)
-	_input.text_submitted.connect(_on_submitted)
-	column.add_child(_input)
+	_query = LineEdit.new()
+	_query.placeholder_text = "输入命令，help 查看全部"
+	_query.custom_minimum_size = Vector2(0.0, 40.0)
+	_query.add_theme_color_override("font_color", UiTheme.TEXT)
+	_query.add_theme_font_size_override("font_size", 18)
+	_query.text_submitted.connect(_on_submitted)
+	column.add_child(_query)
 
 	_print_line("[color=#888780]调试控制台。输入 help 看命令。`~` 关闭。[/color]")
 
@@ -72,8 +72,8 @@ func toggle() -> void:
 	visible = not visible
 	if visible:
 		_fit_to_viewport()
-		_input.grab_focus()
-		_input.clear()
+		_query.grab_focus()
+		_query.clear()
 
 
 ## 把自己撑满视口。CanvasLayer 不是 Control，锚点指望不上。
@@ -104,16 +104,16 @@ func _unhandled_key_input(event: InputEvent) -> void:
 	if key.keycode == KEY_UP and not _history.is_empty():
 		_history_cursor = maxi(0, _history_cursor - 1) if _history_cursor >= 0 \
 			else _history.size() - 1
-		_input.text = _history[_history_cursor]
-		_input.caret_column = _input.text.length()
+		_query.text = _history[_history_cursor]
+		_query.caret_column = _query.text.length()
 		accept_event()
 	elif key.keycode == KEY_DOWN:
 		if _history_cursor >= 0 and _history_cursor < _history.size() - 1:
 			_history_cursor += 1
-			_input.text = _history[_history_cursor]
+			_query.text = _history[_history_cursor]
 		else:
 			_history_cursor = -1
-			_input.text = ""
+			_query.text = ""
 		accept_event()
 
 
@@ -123,7 +123,7 @@ func _unhandled_key_input(event: InputEvent) -> void:
 
 func _on_submitted(line: String) -> void:
 	var text := line.strip_edges()
-	_input.clear()
+	_query.clear()
 	if text.is_empty():
 		return
 	_history.append(text)
@@ -156,6 +156,8 @@ func _execute(text: String) -> void:
 			_cmd_unlock(args)
 		"ending":
 			_cmd_ending(args)
+		"cycle":
+			_cmd_cycle(args)
 		"state":
 			_cmd_state()
 		"audit":
@@ -186,6 +188,7 @@ func _print_help() -> void:
 		["unlock <类型> <id>", "解锁收藏（cg / music / endings）"],
 		["unlock all", "解锁全部收藏"],
 		["ending <id>", "直接触发某个结局"],
+		["cycle [n|reset]", "查看周目 / 拨到第 n 周目 / 清空周目记录"],
 		["state", "打印当前运行状态"],
 		["audit", "跑一遍剧本静态校验"],
 		["assets", "列出缺哪些素材"],
@@ -310,6 +313,9 @@ func _cmd_state() -> void:
 	_print_line("文件　　%s" % runner.get_current_file().get_file())
 	_print_line("标签　　%s" % runner.get_current_label())
 	_print_line("章节　　%s" % GameManager.chapter_title)
+	_print_line("周目　　第 %d 周目（通关 %d 次，解锁 %d 个结局）"
+		% [CycleManager.get_cycle(), CycleManager.total_clears(),
+			CycleManager.distinct_clears()])
 	_print_line("游玩　　%s" % SaveManager.format_play_time(GameManager.play_time))
 	var affs := GameManager.get_all_affections()
 	if affs.is_empty():
@@ -324,6 +330,35 @@ func _cmd_state() -> void:
 	if rollback != null:
 		_print_line("回滚　　%d / %d 格（游标 %d）"
 			% [rollback.size(), rollback.capacity, rollback.cursor()])
+
+
+func _cmd_cycle(args: PackedStringArray) -> void:
+	if args.is_empty():
+		_print_line("第 %d 周目　通关 %d 次（%d 个不同结局）"
+			% [CycleManager.get_cycle(), CycleManager.total_clears(),
+				CycleManager.distinct_clears()])
+		for entry in CycleManager.clear_summary():
+			var record: Dictionary = entry
+			_print_line("  %s ×%d" % [String(record.get("id", "")), int(record.get("count", 0))])
+		var inherited := CycleManager.inherited_summary()
+		if inherited.is_empty():
+			_print_line("继承　　（无 —— 剧本没写 carry，或还没通关过）")
+		else:
+			for kind in inherited.keys():
+				_print_line("继承　　%s：%s"
+					% [String(kind), ", ".join((inherited[kind] as Dictionary).keys())])
+		return
+	var raw := String(args[0]).to_lower()
+	if raw == "reset":
+		CycleManager.reset_all()
+		_print_line("[color=#5DCAA5]周目记录已清空（回到第 1 周目）[/color]")
+		return
+	if not raw.is_valid_int():
+		_print_line("[color=#E24B4A]用法：cycle [n|reset][/color]")
+		return
+	CycleManager.force_cycle(raw.to_int())
+	_print_line("[color=#5DCAA5]已拨到第 %d 周目[/color]（下次「开始游戏」按它取分支）"
+		% CycleManager.get_cycle())
 
 
 func _cmd_audit() -> void:

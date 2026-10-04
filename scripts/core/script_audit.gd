@@ -44,6 +44,9 @@ static func audit() -> Dictionary:
 	var referenced := {}        # 文件 -> {标签: true}（被 jump/call/choice 指向的）
 	var referenced_files := {}
 	var set_flags := {}         # 剧本里所有被 flag 指令置位过的旗标名
+	var set_vars := {}          # 剧本里所有被 set / add / sub / call 参数写过的变量名
+	var interp_reads: Array = []   # 台词 / 章节名 / 结局标题里用到的 {$名字}
+	var carried := {}           # 剧本里所有 carry 标记（键是 "类型:名字"）
 
 	# 重播片段的起止标签也是「入口」—— 它们由 cg.json 的 replay 字段引用，
 	# 剧本里没人跳转过去，但绝不是死代码
@@ -121,11 +124,35 @@ static func audit() -> Dictionary:
 						ending_owner[id] = file_name
 					if not CollectionRegistry.has_item("endings", id):
 						warnings.append("结局 %s 没登记进 endings.json，玩家看不到它" % id)
+					_collect_interp(String(cmd.get("title", "")), file_name,
+						int(cmd.get("line", 0)), interp_reads)
 				"flag":
 					set_flags[String(cmd.get("name", ""))] = true
+				"set", "add", "sub":
+					set_vars[String(cmd.get("name", ""))] = true
+				"call":
+					# 具名参数在子过程里当变量用（`{$who}`），算一次写入
+					for key in (cmd.get("params", {}) as Dictionary).keys():
+						set_vars[String(key)] = true
+				"chapter":
+					_collect_interp(String(cmd.get("title", "")), file_name,
+						int(cmd.get("line", 0)), interp_reads)
+				"branch_false":
+					# `if cleared <结局id>` 写错 id 的话，那段 NG+ 内容永远不会出现，
+					# 而且完全不报错 —— 和「解析器认识、调度器不转发」是同一类静默失效。
+					var cond: Dictionary = cmd.get("cond", {})
+					if String(cond.get("kind", "")) == "cleared":
+						var ref := String(cond.get("name", ""))
+						if not ref.is_empty() and not CollectionRegistry.has_item("endings", ref):
+							warnings.append("%s：cleared 引用了 endings.json 里没有的结局 id %s"
+								% [file_name, ref])
+				"carry":
+					carried["%s:%s" % [String(cmd.get("kind", "")), String(cmd.get("name", ""))]] = true
 				"say":
 					if String(cmd.get("text", "")).strip_edges().is_empty():
 						warnings.append("%s：有一句空台词" % file_name)
+					_collect_interp(String(cmd.get("text", "")), file_name,
+						int(cmd.get("line", 0)), interp_reads)
 
 	# 章节声明了 unlock_flag，却没有任何 flag 指令会设置它 —— 那一章永远选不了。
 	# 和「解析器认识、调度器不转发」是同一类问题：配置写好了，但没人执行。
@@ -135,6 +162,19 @@ static func audit() -> Dictionary:
 			continue
 		warnings.append("章节「%s」的 unlock_flag %s 没有任何 flag 指令会设置它，这一章永远解锁不了"
 			% [String((entry as Dictionary).get("title", "")), unlock_flag])
+
+	# 同类的静默失效：carry flag X 而剧本里根本没有 flag X —— 继承永远是空操作，
+	# 玩家在二周目里等不到那段「上一周目的记忆」。
+	for key in carried.keys():
+		var text := String(key)
+		var sep := text.find(":")
+		if sep <= 0 or text.substr(0, sep) != "flag":
+			continue
+		var carried_flag := text.substr(sep + 1)
+		if set_flags.has(carried_flag):
+			continue
+		warnings.append("carry flag %s 没有任何 flag 指令会点亮它，下一周目继承不到东西"
+			% carried_flag)
 
 	# 跳转目标文件是否存在
 	for file_name in referenced_files.keys():
@@ -155,12 +195,50 @@ static func audit() -> Dictionary:
 				continue
 			warnings.append("%s：标签 %s 没人跳转过来（死代码？）" % [file_name, name])
 
+	# 台词插值引用了没人写过的名字 —— 和「只读不写」的变量是同一类静默失效：
+	# 不报错，玩家只会在对话框里看到 `{$好感}` 原样印出来。
+	for w in interp_warnings(interp_reads, set_vars):
+		warnings.append(String(w))
+
 	return {
 		"errors": errors,
 		"warnings": warnings,
 		"files": files.size(),
 		"commands": total_commands,
 	}
+
+
+## 插值引用了没人写过的名字 → warning。
+##
+## 抽成独立函数是为了能直接测（`audit()` 只扫真实的 `data/scripts/`，
+## 测试往里塞文件会破坏 `purity_test` 守着的「测试不动剧本目录」）。
+##
+## 只查**裸名字**（`{$名字}`）：`{$affection.x}` / `{$flag.x}` 由引擎或好感度指令提供，
+## `{$1}` 是 call 的位置参数 —— 查它们只会产生假警报。
+static func interp_warnings(interp_reads: Array, set_vars: Dictionary) -> Array:
+	var out: Array = []
+	var seen := {}
+	for item in interp_reads:
+		var d: Dictionary = item
+		var nm := String(d.get("name", ""))
+		if nm.is_empty() or GvsInterp.is_namespaced(nm) or GvsInterp.is_positional(nm):
+			continue
+		if set_vars.has(nm):
+			continue
+		var key := "%s:%d:%s" % [String(d.get("file", "")), int(d.get("line", 0)), nm]
+		if seen.has(key):
+			continue
+		seen[key] = true
+		out.append("%s：第 %d 行的插值 {$%s} 没有任何 set / call 参数写过它，玩家会看到原样的 {$%s}"
+			% [String(d.get("file", "")), int(d.get("line", 0)), nm, nm])
+	return out
+
+
+## 收集一段文本里的插值名，带上出处（文件 / 行号），供上面那条 warning 用。
+static func _collect_interp(text: String, file_name: String, line: int,
+		out: Array) -> void:
+	for name in GvsInterp.names_in(text):
+		out.append({"name": name, "file": file_name, "line": line})
 
 
 # ---------------------------------------------------------------------------

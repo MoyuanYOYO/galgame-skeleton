@@ -366,37 +366,43 @@ anchors_preset = 15
 anchor_right = 1.0
 anchor_bottom = 1.0
 offset_left = 460.0
-offset_top = 170.0
+offset_top = 135.0
 offset_right = -460.0
-offset_bottom = -170.0
+offset_bottom = -135.0
 grow_horizontal = 2
 grow_vertical = 2
 
-[node name="VBox" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel" unique_id=1626195462]
+[node name="Scroll" type="ScrollContainer" parent="UILayer/SettingsPanel/Panel" unique_id=1428863094]
 layout_mode = 2
+size_flags_vertical = 3
+horizontal_scroll_mode = 0
+
+[node name="VBox" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel/Scroll" unique_id=1626195462]
+layout_mode = 2
+size_flags_horizontal = 3
 theme_override_constants/separation = 22
 
-[node name="Header" type="Label" parent="UILayer/SettingsPanel/Panel/VBox" unique_id=1698057918]
+[node name="Header" type="Label" parent="UILayer/SettingsPanel/Panel/Scroll/VBox" unique_id=1698057918]
 layout_mode = 2
 text = "设置"
 
-[node name="SettingsRows" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel/VBox" unique_id=1796840647]
+[node name="SettingsRows" type="VBoxContainer" parent="UILayer/SettingsPanel/Panel/Scroll/VBox" unique_id=1796840647]
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_vertical = 3
 theme_override_constants/separation = 20
 
-[node name="ButtonRow" type="HBoxContainer" parent="UILayer/SettingsPanel/Panel/VBox" unique_id=440432305]
+[node name="ButtonRow" type="HBoxContainer" parent="UILayer/SettingsPanel/Panel/Scroll/VBox" unique_id=440432305]
 layout_mode = 2
 theme_override_constants/separation = 16
 alignment = 2
 
-[node name="SettingsReset" type="Button" parent="UILayer/SettingsPanel/Panel/VBox/ButtonRow" unique_id=1969067021]
+[node name="SettingsReset" type="Button" parent="UILayer/SettingsPanel/Panel/Scroll/VBox/ButtonRow" unique_id=1969067021]
 unique_name_in_owner = true
 layout_mode = 2
 text = "恢复默认"
 
-[node name="SettingsClose" type="Button" parent="UILayer/SettingsPanel/Panel/VBox/ButtonRow" unique_id=789185469]
+[node name="SettingsClose" type="Button" parent="UILayer/SettingsPanel/Panel/Scroll/VBox/ButtonRow" unique_id=789185469]
 unique_name_in_owner = true
 layout_mode = 2
 text = "关闭"
@@ -570,54 +576,96 @@ horizontal_scroll_mode = 0
 unique_name_in_owner = true
 layout_mode = 2
 size_flags_horizontal = 3
-theme_override_constants/separation = 8
+theme_override_constants/separation = 10
 
-[node name="Right" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body" unique_id=1127647401]
-custom_minimum_size = Vector2(520, 0)
+[node name="Right" type="PanelContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body" unique_id=1127647401]
+custom_minimum_size = Vector2(600, 0)
 layout_mode = 2
-theme_override_constants/separation = 16
+size_flags_vertical = 4
 
-[node name="VisualizerHost" type="Control" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=1768981519]
-unique_name_in_owner = true
-custom_minimum_size = Vector2(0, 230)
+[node name="Player" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=1900000001]
 layout_mode = 2
-mouse_filter = 2
+theme_override_constants/separation = 18
 
-[node name="NowPlaying" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=228669489]
-unique_name_in_owner = true
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="TrackArtist" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=1830400557]
-unique_name_in_owner = true
-layout_mode = 2
-horizontal_alignment = 1
-
-[node name="Controls" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=1804638003]
-layout_mode = 2
-theme_override_constants/separation = 12
-alignment = 1
-
-[node name="MusicPrev" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls" unique_id=2053153981]
-unique_name_in_owner = true
-layout_mode = 2
-text = "上一首"
-
-[node name="MusicPlay" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls" unique_id=2136027008]
-unique_name_in_owner = true
-layout_mode = 2
-text = "播放"
-
-[node name="MusicNext" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Controls" unique_id=1862712238]
-unique_name_in_owner = true
-layout_mode = 2
-text = "下一首"
-
-[node name="MusicTime" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right" unique_id=19928226]
+[node name="MusicStatus" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player" unique_id=1900000003]
 unique_name_in_owner = true
 layout_mode = 2
 text = "未在播放"
 horizontal_alignment = 1
+
+[node name="SongBox" type="VBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player" unique_id=1900000004]
+custom_minimum_size = Vector2(0, 78)
+layout_mode = 2
+theme_override_constants/separation = 4
+
+[node name="NowPlaying" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/SongBox" unique_id=228669489]
+unique_name_in_owner = true
+layout_mode = 2
+text = "—"
+horizontal_alignment = 1
+vertical_alignment = 1
+
+[node name="TrackArtist" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/SongBox" unique_id=1830400557]
+unique_name_in_owner = true
+layout_mode = 2
+text = " "
+horizontal_alignment = 1
+
+[node name="Progress" type="HSlider" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player" unique_id=1900000005]
+unique_name_in_owner = true
+custom_minimum_size = Vector2(0, 26)
+layout_mode = 2
+max_value = 1.0
+step = 0.01
+
+[node name="TimeRow" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player" unique_id=1900000006]
+layout_mode = 2
+
+[node name="MusicTime" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/TimeRow" unique_id=19928226]
+unique_name_in_owner = true
+layout_mode = 2
+size_flags_horizontal = 3
+text = "00:00"
+
+[node name="MusicLength" type="Label" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/TimeRow" unique_id=1900000007]
+unique_name_in_owner = true
+layout_mode = 2
+text = "--:--"
+horizontal_alignment = 2
+
+[node name="Controls" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player" unique_id=1804638003]
+layout_mode = 2
+theme_override_constants/separation = 12
+alignment = 1
+
+[node name="MusicPrev" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/Controls" unique_id=2053153981]
+unique_name_in_owner = true
+layout_mode = 2
+text = "上一首"
+
+[node name="MusicPlay" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/Controls" unique_id=2136027008]
+unique_name_in_owner = true
+layout_mode = 2
+text = "播放"
+
+[node name="MusicStop" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/Controls" unique_id=1900000008]
+unique_name_in_owner = true
+layout_mode = 2
+text = "停止"
+
+[node name="MusicNext" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/Controls" unique_id=1862712238]
+unique_name_in_owner = true
+layout_mode = 2
+text = "下一首"
+
+[node name="ModeRow" type="HBoxContainer" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player" unique_id=1900000009]
+layout_mode = 2
+alignment = 1
+
+[node name="MusicMode" type="Button" parent="UILayer/GalleryPanel/Panel/VBox/MusicRoot/Body/Right/Player/ModeRow" unique_id=1900000010]
+unique_name_in_owner = true
+layout_mode = 2
+text = "列表循环"
 
 [node name="CgViewer" type="Control" parent="UILayer" unique_id=331624997]
 unique_name_in_owner = true
