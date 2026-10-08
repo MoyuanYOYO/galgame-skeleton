@@ -850,25 +850,29 @@ func _install_fx(bus_name: String, kind: String, strength: float, pitch: float) 
 				0.25, 4.0)
 			added.append(ps3)
 		"muffle", "underwater":
+			# `strength` 在这里表示「闷的程度」：越大截止频率越低。
+			# 用**除法**而不是乘法 —— 1.0 要正好等于原来的固定值（700 / 380Hz），
+			# 这样老剧本的听感不变。
+			var base_cut := 700.0 if kind == "muffle" else 380.0
 			var lp2 := AudioEffectLowPassFilter.new()
-			lp2.cutoff_hz = 700.0 if kind == "muffle" else 380.0
+			lp2.cutoff_hz = clampf(base_cut / s, 90.0, 8000.0)
 			lp2.resonance = 0.4
 			added.append(lp2)
 			if kind == "underwater":
 				var rv := AudioEffectReverb.new()
-				rv.room_size = 0.7
+				rv.room_size = clampf(0.7 * sqrt(s), 0.1, 1.0)
 				rv.damping = 0.6
-				rv.wet = 0.35
+				rv.wet = clampf(0.35 * s, 0.05, 0.9)
 				rv.dry = 0.85
 				added.append(rv)
 		"radio":
 			var bp := AudioEffectBandPassFilter.new()
 			bp.cutoff_hz = 1600.0
-			bp.resonance = 0.85
+			bp.resonance = clampf(0.85 * sqrt(s), 0.1, 1.0)
 			added.append(bp)
 			var d4 := AudioEffectDistortion.new()
 			d4.mode = AudioEffectDistortion.MODE_ATAN
-			d4.drive = 0.35
+			d4.drive = clampf(0.35 * s, 0.0, 1.0)
 			added.append(d4)
 		"echo":
 			# ⚠️ AudioEffectDelay 里没有 `feedback` 这个属性 —— 回授要显式打开

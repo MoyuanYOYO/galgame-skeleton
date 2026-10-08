@@ -35,6 +35,7 @@ func _ready() -> void:
 	_test_doc_undo()
 	_test_doc_save()
 	_test_directive_params()
+	_test_line_state()
 	_test_project_index()
 	_test_file_watcher()
 
@@ -480,6 +481,72 @@ func _test_directive_params() -> void:
 # ---------------------------------------------------------------------------
 # 9. 素材索引
 # ---------------------------------------------------------------------------
+
+## `line_state` = 「到某一行为止的累积舞台状态」。预览窗的「从此处预览」与
+## 「跟随光标」都靠它摆画面，所以它必须和**运行时的状态机**给出同样的结果 ——
+## 不一致的话，预览会显示一个游戏里根本不存在的画面
+## （用户报的「点击预览，预览窗没有正确显示移动后的立绘」）。
+##
+## 这类 bug 的共同点是**同一个语义在两处各写了一遍**：运行时 `Stage` 一套、
+## 编辑器 `line_state` 一套，改了一处忘了另一处。所以下面的断言逐条钉住
+## 「两边一致」这个事实，而不是「某个函数被调到了」。
+func _test_line_state() -> void:
+	_section = "累积舞台状态（line_state）"
+
+	# --- move 的槽位两种写法都认 ---
+	# 编辑器「移到」下拉写出来的是 `at=right`。以前只认位置参数（`l.args[1]`），
+	# 于是「在编辑器里改完位置，预览纹丝不动」。
+	var doc := ScriptDoc.new()
+	doc.set_full_text("\n".join([
+		"label start", "bg classroom",
+		"show alice at=left",
+		"move alice at=right",
+		"narr 测试。", ""]))
+	_ok(String(_char_entry(doc.line_state(5), "alice").get("at", "")) == "right",
+		"move 的 at= 写法在累积状态里生效（实得 %s）"
+		% String(_char_entry(doc.line_state(5), "alice").get("at", "—")))
+
+	# --- move 到槽位要把 x 交还槽位，y 保留（槽位表里只有横向比率）---
+	doc.set_full_text("\n".join([
+		"label start", "bg classroom",
+		"show alice x=460 y=1600",
+		"move alice right",
+		"narr 测试。", ""]))
+	var c := _char_entry(doc.line_state(5), "alice")
+	_ok(String(c.get("at", "")) == "right", "move 到槽位：at 更新")
+	_ok(not c.has("x"), "move 到槽位：x 交还槽位（实得 %s）" % str(c.get("x", "—")))
+	_ok(c.has("y") and is_equal_approx(float(c["y"]), 1600.0),
+		"move 到槽位：y 保留（实得 %s）" % str(c.get("y", "—")))
+
+	# --- show 是「重新定位」：没给的轴回默认 ---
+	# `_upsert_char` 只覆盖不删除，所以要显式清 —— 否则
+	# `show alice x=460 y=1600` 之后再 `show alice at=left`，预览里还在 460。
+	doc.set_full_text("\n".join([
+		"label start", "bg classroom",
+		"show alice x=460 y=1600",
+		"show alice at=left",
+		"narr 测试。", ""]))
+	var c2 := _char_entry(doc.line_state(5), "alice")
+	_ok(String(c2.get("at", "")) == "left", "再 show 到槽位：at 更新")
+	_ok(not c2.has("x") and not c2.has("y"),
+		"再 show 没给坐标 → 旧坐标被清掉（实得 x=%s y=%s）"
+		% [str(c2.get("x", "—")), str(c2.get("y", "—"))])
+
+	# --- move 不会让不在台上的角色出现（与 `Stage.move_char` 一致）---
+	doc.set_full_text("\n".join([
+		"label start", "bg classroom",
+		"move bob right",
+		"narr 测试。", ""]))
+	_ok((doc.line_state(4).get("chars", []) as Array).is_empty(),
+		"move 一个没 show 过的角色：不会凭空出现在台上")
+
+
+func _char_entry(st: Dictionary, cid: String) -> Dictionary:
+	for c in st.get("chars", []):
+		if String((c as Dictionary).get("id", "")) == cid:
+			return c
+	return {}
+
 
 func _test_project_index() -> void:
 	_sec("素材索引")

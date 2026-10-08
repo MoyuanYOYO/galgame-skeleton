@@ -13,10 +13,20 @@ const OUT_DIR := "user://captures"
 const MAIN_SCENE := "res://scenes/main.tscn"
 
 var _main: Node
+## 玩家数据的现场备份 —— 这个工具会**真的把剧情推到结局**、还会解锁一堆收藏，
+## 不备份的话跑一次截图就把玩家的周目记录和鉴赏进度改了
+## （实测：连跑几次之后标题界面变成「第 10 周目 · 已通关 9 次」）。
+## `tools/smoke.gd` 一直是这么做的，这里补上。
+var _cycle_backup: Dictionary = {}
+var _collection_backup: Dictionary = {}
+var _config_backup: Dictionary = {}
+var _auto_backup: Dictionary = {}
+var _cycle_file_existed := false
 
 
 func _ready() -> void:
 	DirAccess.make_dir_recursive_absolute(OUT_DIR)
+	_backup_player_data()
 
 	await _wait(0.2)
 	var scene := load(MAIN_SCENE) as PackedScene
@@ -202,7 +212,38 @@ func _ready() -> void:
 	await _shot("14_cg_viewer")
 
 	print("[capture] 完成，输出目录: %s" % ProjectSettings.globalize_path(OUT_DIR))
+	_restore_player_data()
 	get_tree().quit(0)
+
+
+# ---------------------------------------------------------------------------
+# 玩家数据备份 / 还原
+# ---------------------------------------------------------------------------
+
+func _backup_player_data() -> void:
+	_cycle_backup = CycleManager.to_dict()
+	_collection_backup = CollectionManager.to_dict()
+	_config_backup = ConfigManager.data.duplicate(true)
+	_auto_backup = SaveManager.read_slot(SaveManager.AUTO_SLOT)
+	# 连「文件原本存不存在」也记下来：第一次跑不该凭空给玩家造出一个周目记录
+	_cycle_file_existed = FileAccess.file_exists(CycleManager.SAVE_PATH)
+
+
+func _restore_player_data() -> void:
+	if _auto_backup.is_empty():
+		SaveManager.delete_slot(SaveManager.AUTO_SLOT)
+	else:
+		SaveManager.write_slot(SaveManager.AUTO_SLOT, _auto_backup)
+	CollectionManager.from_dict(_collection_backup)
+	CollectionManager.save_data()
+	for key in _config_backup.keys():
+		ConfigManager.set_value(String(key), _config_backup[key], false)
+	if _cycle_file_existed:
+		CycleManager.from_dict(_cycle_backup)
+		CycleManager.save_now()
+	else:
+		DirAccess.remove_absolute(ProjectSettings.globalize_path(CycleManager.SAVE_PATH))
+	print("[capture] 玩家数据已还原")
 
 
 func _wait(seconds: float) -> void:

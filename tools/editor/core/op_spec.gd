@@ -53,6 +53,13 @@ const VIDEO_LAYERS := ["world", "ui", "top"]
 ## 结束方式
 const MINIGAMES := ["rhythm_qte"]
 
+## 立绘「位置」下拉里多出来的那一项。
+##
+## ⚠️ 它**不是脚本里的值** —— 选中它意味着「不用槽位，改用 x= / y= 坐标」，
+## 写回剧本的是坐标，而不是「自定义」三个字（写进去解析器不认，位置会静默丢失）。
+## 行里有没有 `x=` / `y=` 就是「是不是自定义模式」的判据。
+const CUSTOM_POS := "自定义"
+
 ## 结构类指令：不给可视化控件，删除要确认
 const STRUCTURAL := [
 	"label", "jump", "goto", "call", "return", "jump_file",
@@ -70,6 +77,10 @@ const STRUCTURAL_TEMPLATES := {
 	"call": "call 子过程",
 	"return": "return",
 	"jump_file": "jump_file res://data/scripts/chapter1.gvs start",
+	# 分支关键字。**必须有模板** —— 单行兜底会插出一个光秃秃的 `elif`，
+	# 解析器报「elif 没有对应的 if」，而作者只会看到一行红字不知道缺什么。
+	"elif": "elif flag 新旗标",
+	"else": "else",
 	# together 是多行块，实际插入走 TablePanel._insert_block 的专门分支；
 	# 这里留一份单行兜底，免得别处拿不到模板。
 	"together": "together",
@@ -133,6 +144,11 @@ static func specs() -> Dictionary:
 		},
 		# 音轨效果器。候选值直接取自 AudioFxSpec（解析器 / 运行时 / 编辑器共用一份）——
 		# 手抄一份的后果是「编辑器给了一个运行时拒绝的选项」，不报错、只是没效果。
+		#
+		# ⚠️ 三个参数**不是每个效果都用得到**，所以各带一张 `kinds` 白名单
+		# （同样取自 AudioFxSpec）：只显示真正生效的那几个。
+		# 全摆出来的话，`pitch=1.5` 挂在 `muffle` 上会被当成「调了就有用」，
+		# 而运行时压根不读它。
 		"audio_fx": {
 			"label": "音频特效", "tag": "AFX",
 			"fields": [
@@ -141,11 +157,14 @@ static func specs() -> Dictionary:
 				{"key": "kind", "pos": 1, "type": F_ENUM, "values": Array(AudioFxSpec.KINDS),
 					"default": "glitch", "label": "效果"},
 				{"key": "duration", "type": F_NUM, "min": 0.0, "max": 10.0, "step": 0.1,
-					"default": AudioFxSpec.DEFAULT_DURATION, "label": "秒"},
+					"default": AudioFxSpec.DEFAULT_DURATION, "label": "秒",
+					"when": {"key": "kind", "in": AudioFxSpec.effect_kinds()}},
 				{"key": "strength", "type": F_NUM, "min": 0.1, "max": 4.0, "step": 0.1,
-					"default": 1.0, "label": "强度"},
+					"default": 1.0, "label": "强度",
+					"when": {"key": "kind", "in": Array(AudioFxSpec.STRENGTH_KINDS)}},
 				{"key": "pitch", "type": F_NUM, "min": 0.25, "max": 4.0, "step": 0.05,
-					"default": 1.5, "label": "移调"},
+					"default": 1.5, "label": "移调",
+					"when": {"key": "kind", "in": Array(AudioFxSpec.PITCH_KINDS)}},
 			],
 		},
 		"show": {
@@ -153,9 +172,17 @@ static func specs() -> Dictionary:
 			"fields": [
 				{"key": "char", "pos": 0, "type": F_ASSET, "kind": "char", "label": "角色"},
 				{"key": "expr", "type": F_EXPR, "default": "normal", "label": "表情"},
-				{"key": "at", "type": F_ENUM, "values": ANCHORS, "default": "center", "label": "位置"},
+				{"key": "at", "type": F_ENUM, "values": ANCHORS, "default": "center", "label": "位置",
+				"custom": {"value": CUSTOM_POS, "sets": {"x": 960.0, "y": 1130.0},
+					"clears": ["x", "y"]}},
 				{"key": "type", "type": F_ENUM, "values": TRANSITIONS, "default": "fade", "label": "入场"},
 				{"key": "fade", "type": F_NUM, "min": 0.0, "max": 3.0, "step": 0.05, "default": 0.3, "label": "秒"},
+				# 绝对坐标（不写 = 用 at= 预设）。三个都不写就回到预设位。
+				{"key": "x", "type": F_NUM, "min": -4000.0, "max": 4000.0, "step": 10.0, "default": 960.0, "label": "x",
+				"when": {"key": "at", "in": [CUSTOM_POS]}},
+				{"key": "y", "type": F_NUM, "min": -4000.0, "max": 4000.0, "step": 10.0, "default": 1130.0, "label": "y",
+				"when": {"key": "at", "in": [CUSTOM_POS]}},
+				{"key": "scale", "type": F_NUM, "min": 0.05, "max": 4.0, "step": 0.05, "default": 1.0, "label": "缩放"},
 			],
 		},
 		"hide": {
@@ -170,9 +197,16 @@ static func specs() -> Dictionary:
 			"label": "立绘移动", "tag": "CHAR",
 			"fields": [
 				{"key": "char", "pos": 0, "type": F_ASSET, "kind": "char", "label": "角色"},
-				{"key": "at", "type": F_ENUM, "values": ANCHORS, "default": "center", "label": "移到"},
+				{"key": "at", "type": F_ENUM, "values": ANCHORS, "default": "center", "label": "移到",
+				"custom": {"value": CUSTOM_POS, "sets": {"x": 960.0, "y": 1130.0},
+					"clears": ["x", "y"]}},
 				{"key": "fade", "type": F_NUM, "min": 0.0, "max": 4.0, "step": 0.05, "default": 0.35, "label": "秒"},
 				{"key": "ease", "type": F_ENUM, "values": EASES, "default": "out_cubic", "label": "缓动"},
+				{"key": "x", "type": F_NUM, "min": -4000.0, "max": 4000.0, "step": 10.0, "default": 960.0, "label": "x",
+				"when": {"key": "at", "in": [CUSTOM_POS]}},
+				{"key": "y", "type": F_NUM, "min": -4000.0, "max": 4000.0, "step": 10.0, "default": 1130.0, "label": "y",
+				"when": {"key": "at", "in": [CUSTOM_POS]}},
+				{"key": "scale", "type": F_NUM, "min": 0.05, "max": 4.0, "step": 0.05, "default": 1.0, "label": "缩放"},
 			],
 		},
 		"expr": {
@@ -265,10 +299,18 @@ static func specs() -> Dictionary:
 			"label": "视频", "tag": "VIDEO",
 			"fields": [
 				{"key": "id", "pos": 0, "type": F_ASSET, "kind": "video", "label": "视频", "wide": true},
+				# `at` / `size` 是**自由文本**不是枚举：at 还能写 `320,180` 这样的坐标，
+				# size 写 `640,360`。做成下拉会把这两种用法挡在门外。
+				{"key": "at", "type": F_TEXT, "default": "full", "label": "位置"},
+				{"key": "size", "type": F_TEXT, "default": "", "label": "尺寸"},
 				{"key": "layer", "type": F_ENUM, "values": VIDEO_LAYERS, "default": "world", "label": "图层"},
-				{"key": "wait", "type": F_BOOL, "default": false, "label": "播完再继续"},
-				{"key": "loop", "type": F_BOOL, "default": false, "label": "循环"},
+				{"key": "fade", "type": F_NUM, "min": 0.0, "max": 3.0, "step": 0.05, "default": 0.0, "label": "淡入"},
+				{"key": "speed", "type": F_NUM, "min": 0.1, "max": 4.0, "step": 0.05, "default": 1.0, "label": "倍速"},
+				{"key": "buffer", "type": F_NUM, "min": 0.0, "max": 2000.0, "step": 10.0, "default": 120.0, "label": "缓冲"},
 				{"key": "volume", "type": F_NUM, "min": 0.0, "max": 1.0, "step": 0.05, "default": 1.0, "label": "音量"},
+				{"key": "loop", "type": F_BOOL, "default": false, "label": "循环"},
+				{"key": "wait", "type": F_BOOL, "default": false, "label": "播完再继续"},
+				{"key": "hide", "type": F_BOOL, "default": true, "label": "播完收起"},
 			],
 		},
 		"hide_video": {
@@ -360,7 +402,9 @@ static func specs() -> Dictionary:
 				# 参数是「标签之后的整段」：`who=alice count=2` 或 `alice 2` 都能写。
 				# 必须是 `tail`（吃到行尾）而不是 `rest`（只到最后一个位置参数）——
 				# 具名参数是 kv，`rest` 会把它整段漏掉，界面就永远显示不出参数。
-				{"key": "args", "pos": 1, "type": F_TEXT, "tail": true,
+				# key 叫 `call_args` 而不是 `args`：指令字典里 `args` 是**位置参数数组**，
+				# 同名会让「字段值 ↔ 指令值」的比对看着像对上了，其实是两码事。
+				{"key": "call_args", "pos": 1, "type": F_TEXT, "tail": true,
 					"label": "参数", "wide": true},
 			],
 		},
@@ -376,6 +420,16 @@ static func specs() -> Dictionary:
 			"label": "小游戏", "tag": "FLOW",
 			"fields": [
 				{"key": "id", "pos": 0, "type": F_ENUM, "values": MINIGAMES, "default": "rhythm_qte", "label": "类型"},
+			],
+		},
+		# 演出并行组。它是**块指令**（`together … end`），所以还在 STRUCTURAL 里
+		# （删除要确认、类型下拉里走「插入」），但给一个 `duration` 字段 ——
+		# 没有字段的话作者没法在界面上改「等多久」，只能去源码页手写。
+		"together": {
+			"label": "并行组", "tag": "FLOW",
+			"fields": [
+				{"key": "duration", "type": F_NUM, "min": 0.0, "max": 20.0, "step": 0.1,
+					"default": 0.0, "label": "等"},
 			],
 		},
 		"unlock": {
@@ -415,14 +469,88 @@ static func is_structural(op: String) -> bool:
 	return STRUCTURAL.has(op)
 
 
+## 当前这一行**真正该显示的字段**。
+##
+## 字段可以带一个显示条件：
+##
+##   `"when": {"key": "kind", "in": ["pitch"]}`
+##       只有当 `kind` 字段的当前取值属于 `in` 时才显示（音轨效果器用它 ——
+##       `pitch=` 只有 `pitch` 这一个效果用得到，摆出来就是骗人）
+##   `"when": {"key": "at", "in": ["自定义"]}`
+##       立绘位置切到「自定义」时才显示 x / y
+##
+## `ctx` 是「字段 key → 当前取值」的字典，由 `TablePanel._field_context()` 算好。
+##
+## 不这么做的后果是**界面骗人**：摆着一个写了也没人读的参数，作者会以为调了就有用。
+##
+## 调用方要在条件字段改变后**重建这一行**（`TablePanel._field_write` 已经会
+## `_refresh_row`），否则字段不会跟着出现 / 消失。
+static func fields_for(op: String, ctx: Dictionary) -> Array:
+	var out: Array = []
+	for f in (get_spec(op).get("fields", []) as Array):
+		var fd: Dictionary = f
+		if not _when_ok(fd, ctx):
+			continue
+		out.append(fd)
+	return out
+
+
+static func _when_ok(fd: Dictionary, ctx: Dictionary) -> bool:
+	var cond: Variant = fd.get("when", null)
+	if cond == null or typeof(cond) != TYPE_DICTIONARY:
+		return true
+	var c: Dictionary = cond
+	var key := String(c.get("key", ""))
+	var allowed: Variant = c.get("in", [])
+	if key.is_empty() or typeof(allowed) != TYPE_ARRAY:
+		return true
+	return (allowed as Array).has(ctx.get(key, ""))
+
+
+## 这条指令里被 `when` 引用到的字段 key（`TablePanel` 据此决定要算哪些值）。
+static func when_keys(op: String) -> PackedStringArray:
+	var out := PackedStringArray()
+	for f in (get_spec(op).get("fields", []) as Array):
+		var cond: Variant = (f as Dictionary).get("when", null)
+		if cond == null or typeof(cond) != TYPE_DICTIONARY:
+			continue
+		var key := String((cond as Dictionary).get("key", ""))
+		if not key.is_empty() and not out.has(key):
+			out.append(key)
+	return out
+
+
+## 某个字段的默认取值（生成插入模板 / 初始 ctx 用）
+static func field_default(op: String, key: String) -> String:
+	for f in (get_spec(op).get("fields", []) as Array):
+		var fd: Dictionary = f
+		if String(fd.get("key", "")) != key:
+			continue
+		var v: Variant = fd.get("default", null)
+		return "" if v == null else str(v)
+	return ""
+
+
+## 「全按默认值」的条件上下文 —— 生成插入模板时用。
+static func default_context(op: String) -> Dictionary:
+	var ctx := {}
+	for key in when_keys(op):
+		ctx[key] = field_default(op, key)
+	return ctx
+
+
 ## 一条指令的字段默认值（用于「新建一条指令」时填模板）
 static func default_text(op: String) -> String:
 	var spec := get_spec(op)
 	if spec.is_empty():
 		return op
+	# 只取**默认条件下用得上的**字段 —— 模板里不该出现 `pitch=1.5` 这种
+	# 对默认效果（glitch）毫无作用的参数，也不该出现 `x=960` 这种
+	# 「位置还没选自定义」时的坐标。
+	var fields := fields_for(op, default_context(op))
 	var parts: Array = [op]
 	var pos_fields: Array = []
-	for f in (spec.get("fields", []) as Array):
+	for f in fields:
 		var fd: Dictionary = f
 		if fd.has("pos"):
 			pos_fields.append(fd)
@@ -430,7 +558,7 @@ static func default_text(op: String) -> String:
 		return int(a["pos"]) < int(b["pos"]))
 	for fd in pos_fields:
 		parts.append(_placeholder(fd))
-	for f2 in (spec.get("fields", []) as Array):
+	for f2 in fields:
 		var fd2: Dictionary = f2
 		if fd2.has("pos"):
 			continue
@@ -438,14 +566,20 @@ static func default_text(op: String) -> String:
 			if bool(fd2.get("default", false)):
 				parts.append("%s=true" % fd2["key"])
 			continue
-		parts.append("%s=%s" % [fd2["key"], _placeholder(fd2)])
+		var ph := _placeholder(fd2)
+		# kv 参数没有默认值就不写进模板 —— `size=` 这种空参数摆在那儿
+		# 既难看又容易被误当成「必须填」。
+		if ph.is_empty():
+			continue
+		parts.append("%s=%s" % [fd2["key"], ph])
 	return " ".join(parts)
 
 
 static func _placeholder(fd: Dictionary) -> String:
+	var label := String(fd.get("label", fd.get("key", "值")))
 	match String(fd.get("type", "")):
 		F_ASSET:
-			return "<%s>" % String(fd.get("label", "id"))
+			return "<%s>" % label
 		F_EXPR:
 			return String(fd.get("default", "normal"))
 		F_ENUM:
@@ -454,6 +588,12 @@ static func _placeholder(fd: Dictionary) -> String:
 			return _fmt_num(float(fd.get("default", 0.0)))
 		F_BOOL:
 			return "true" if bool(fd.get("default", false)) else "false"
+		F_TEXT, F_LABEL:
+			# 有默认值就用默认值；没有就给一个**看得懂的占位**（`<变量>` / `<标签>`）。
+			# 以前这里返回空串，模板会变成 `set  1` 这种缺参数的行 ——
+			# 既没法解析，作者也不知道该填什么。
+			var d := String(fd.get("default", ""))
+			return d if not d.is_empty() else "<%s>" % label
 	return String(fd.get("default", ""))
 
 
@@ -475,7 +615,7 @@ static func insert_menu() -> Array:
 		["音频", ["bgm", "se", "voice"]],
 		["音频特效", ["audio_fx"]],
 		["画面特效", ["weather", "screen_fx", "screen_flash", "screen_shake", "clear"]],
-		["流程", ["wait", "wait_click", "choice", "if", "end", "chapter", "minigame"]],
+		["流程", ["wait", "wait_click", "choice", "if", "elif", "else", "end", "chapter", "minigame"]],
 		["状态与变量", ["flag", "affection", "set", "add", "sub", "carry", "unlock"]],
 		["结局", ["ending"]],
 		["媒体", ["video", "hide_video"]],

@@ -13,6 +13,13 @@ extends RefCounted
 
 const CONFIG_PATH := "res://data/ui/ui_theme.json"
 
+## 不显式指定字体键时用的那个 —— 也就是「界面 / 系统字体」。
+##
+## ⚠️ 默认必须是 `body` 而不是空串。以前默认空串 = **不挂任何字体**，
+## 于是 `fonts.body` 改了没有任何效果（只有 `apply_button` 里写死了 body，
+## 所以「按钮变了、其它地方没变」）。主题里摆着一个改不动的键就是界面骗人。
+const DEFAULT_FONT_KEY := "body"
+
 ## 挂在按钮上的元数据键，用来避免重复挂音效
 const SFX_META := "__ui_theme_sfx"
 
@@ -171,6 +178,56 @@ static func dialogue_value(key: String, fallback: float) -> float:
 	return fallback if raw == null else float(raw)
 
 
+## 居中旁白的位置与内边距。
+##
+## 与 `dialogue_value` 分开是有意的：旁白的 offset 相对**全屏**锚点
+## （要能摆在画面正中），而对话框相对**底边**锚点 —— 混用一个分组会让
+## 「改旁白的边距」连带把对话框也挪了。
+static func narration_value(key: String, fallback: float) -> float:
+	_ensure()
+	var raw: Variant = section("narration").get(key, null)
+	return fallback if raw == null else float(raw)
+
+
+## 某个分组里的字符串值（颜色 / 路径这类）。缺省时返回 fallback。
+static func section_text(group: String, key: String, fallback: String) -> String:
+	_ensure()
+	var raw: Variant = section(group).get(key, null)
+	return fallback if raw == null else String(raw)
+
+
+## 某个分组里的颜色。
+##
+## **空串 = 用 fallback** —— 「没配」和「配成透明」是两回事，不能混。
+static func section_color(group: String, key: String, fallback: Color) -> Color:
+	var raw := section_text(group, key, "")
+	if raw.strip_edges().is_empty():
+		return fallback
+	return Color.from_string(raw, fallback)
+
+
+## 居中旁白分组里的字符串值（`outline_color` 这类）
+static func narration_text(key: String, fallback: String) -> String:
+	return section_text("narration", key, fallback)
+
+
+## 居中旁白的底板。**默认完全透明** —— 居中旁白就是要没有框，
+## 文字直接压在画面上；配了 `texture` 才画底板（想给它加个半透明衬底时用）。
+##
+## 因为默认没有底板，文字的可读性靠描边（`outline_size` / `outline_color`）
+## 保证，见 `DialogueBox._apply_text_outline()`。
+static func narration_stylebox() -> StyleBox:
+	var pad_h := int(narration_value("pad_h", 40))
+	var pad_v := int(narration_value("pad_v", 20))
+	var path := String(section("narration").get("texture", "")).strip_edges()
+	if not path.is_empty():
+		var sb := load_ninepatch(path, int(narration_value("texture_margin", 48)),
+			pad_h, pad_v, Color.WHITE, false)
+		if sb != null:
+			return sb
+	return stylebox(Color(0, 0, 0, 0), 0, Color(0, 0, 0, 0), 0, pad_h, pad_v)
+
+
 ## 演出层参数（多立绘同框时的压暗程度等）
 static func stage_value(key: String, fallback: float) -> float:
 	_ensure()
@@ -246,10 +303,30 @@ static func install_global_font(node: Node) -> void:
 
 
 ## 给单个控件指定字体（用于标题、对白这类与正文不同的字体）
+## 给控件挂上某个字体键对应的字体。
+##
+## ⚠️ **主题项的名字因控件而异**：`Label` / `Button` 用 `font`，
+## 而 `RichTextLabel` 用 `normal_font` / `bold_font` / `italics_font` /
+## `bold_italics_font` / `mono_font` —— **它没有 `font` 这一项**。
+## 一律写 `font` 的话，Label / Button 生效、RichTextLabel **静默无效**：
+## `has_theme_font_override("font")` 还是 `true`，看代码会以为改上了，
+## 实际渲染用的是默认字体。对白正文就是 RichTextLabel —— 这个坑踩过。
 static func apply_font(node: Control, key: String) -> void:
 	var f := font(key)
-	if f != null:
-		node.add_theme_font_override("font", f)
+	if f == null:
+		return
+	if node is RichTextLabel:
+		var rt := node as RichTextLabel
+		for item in RICH_TEXT_FONT_ITEMS:
+			rt.add_theme_font_override(String(item), f)
+		return
+	node.add_theme_font_override("font", f)
+
+
+## RichTextLabel 认的全部字体主题项
+const RICH_TEXT_FONT_ITEMS := [
+	"normal_font", "bold_font", "italics_font", "bold_italics_font", "mono_font",
+]
 
 
 # ---------------------------------------------------------------------------
@@ -671,7 +748,7 @@ static func apply_slider(s: HSlider) -> void:
 # ---------------------------------------------------------------------------
 
 static func apply_label(label: Label, color: Color = TEXT, font_size: int = 22,
-		font_key: String = "") -> void:
+		font_key: String = DEFAULT_FONT_KEY) -> void:
 	# 手动 override 优先（同 apply_panel 的约定）：编辑器里改过的颜色 /
 	# 字号不被主题盖掉
 	if not label.has_theme_color_override("font_color"):
@@ -692,7 +769,7 @@ static func apply_label(label: Label, color: Color = TEXT, font_size: int = 22,
 ## 注意这里不能像 apply_label 那样「有 override 就跳过」：默认主题的颜色**不算
 ## override**，跳过就等于没改。
 static func apply_check_button(check: CheckButton, color: Color = TEXT,
-		font_size: int = 20, font_key: String = "") -> void:
+		font_size: int = 20, font_key: String = DEFAULT_FONT_KEY) -> void:
 	for key in ["font_color", "font_hover_color", "font_pressed_color",
 			"font_hover_pressed_color", "font_focus_color"]:
 		check.add_theme_color_override(key, color)
@@ -703,7 +780,7 @@ static func apply_check_button(check: CheckButton, color: Color = TEXT,
 
 
 static func apply_rich_text(label: RichTextLabel, color: Color = TEXT,
-		font_size: int = 28, font_key: String = "") -> void:
+		font_size: int = 28, font_key: String = DEFAULT_FONT_KEY) -> void:
 	# 同上
 	if not label.has_theme_color_override("default_color"):
 		label.add_theme_color_override("default_color", color)

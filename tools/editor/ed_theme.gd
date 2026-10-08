@@ -380,6 +380,10 @@ static func spacer(h: float) -> Control:
 
 
 ## 一个可伸缩的横向填充
+##
+## ⚠️ 同一行里若已经有别的 EXPAND 控件（比如对白行的台词输入框），
+## 再摆一个填充会跟它**平分**富余宽度 —— 表现是「台词右边凭空空出一大块」。
+## 那种行不要放填充，让真正的那个控件吃满。
 static func hfill() -> Control:
 	var c := Control.new()
 	c.size_flags_horizontal = Control.SIZE_EXPAND_FILL

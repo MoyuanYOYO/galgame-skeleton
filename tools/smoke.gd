@@ -19,6 +19,8 @@ const PROLOGUE := "res://data/scripts/prologue.gvs"
 const CHAPTER1 := "res://data/scripts/chapter1.gvs"
 const TEST_SCRIPT_PATH := "user://__smoke_test.gvs"
 const OP_COVERAGE_PATH := "user://__smoke_op_coverage.gvs"
+## 字体测试用的替身（`SystemFont` 的 .tres）—— 不需要往项目里塞真字体文件
+const FONT_FIXTURE := "res://tools/fixtures/fonts/test_font.tres"
 
 ## 序章全选第一项 + 小游戏通关后的期望好感度：
 ##   5(选项) + 8(小游戏) + 15(天台选项) + 6(第一章选项) + 10(真结局) = 44
@@ -230,6 +232,49 @@ func _check_ui_theme() -> void:
 	# --- 配置加载 ---
 	_ok(UiTheme.color("accent").a > 0.5, "调色板可解析（accent=%s）" % UiTheme.ACCENT)
 	_ok(UiTheme.number("title", 0.0) > 0.0, "字号配置存在（title=%d）" % int(UiTheme.number("title", 0.0)))
+
+	# --- 字体键真的生效吗 ---
+	# `fonts.body` / `fonts.dialogue` 曾经**改了没有任何效果**，两个原因：
+	#   · `apply_label` / `apply_rich_text` 的默认字体键是空串 → 压根不挂字体
+	#   · `apply_font` 一律写 `font` 主题项，而 RichTextLabel 用的是 `normal_font`
+	#     → 对白正文（RichTextLabel）永远用默认字体，还不报错
+	# 主题里摆着改不动的键就是界面骗人，所以逐类控件验一遍。
+	# 用一个 `SystemFont` 的 .tres 当替身（不需要往项目里塞真字体文件）。
+	var fonts_backup := String(UiTheme.section("fonts").get("body", ""))
+	UiTheme._data["fonts"]["body"] = FONT_FIXTURE
+	UiTheme._font_cache.clear()
+	var fixture := load(FONT_FIXTURE) as Font
+	_ok(fixture != null, "字体替身能加载（%s）" % FONT_FIXTURE)
+
+	var f_label := Label.new()
+	add_child(f_label)
+	UiTheme.apply_label(f_label, UiTheme.TEXT, 20)
+	_ok(f_label.get_theme_font("font") == fixture, "界面字体（Label）跟着 fonts.body 走")
+	f_label.queue_free()
+
+	var f_check := CheckButton.new()
+	add_child(f_check)
+	UiTheme.apply_check_button(f_check, UiTheme.TEXT, 20)
+	_ok(f_check.get_theme_font("font") == fixture, "开关（CheckButton）也跟着走")
+	f_check.queue_free()
+
+	var f_rich := RichTextLabel.new()
+	add_child(f_rich)
+	UiTheme.apply_rich_text(f_rich, UiTheme.TEXT, 20)
+	# ⚠️ 这一条是重点：RichTextLabel 认的是 `normal_font`，不是 `font`
+	_ok(f_rich.get_theme_font("normal_font") == fixture,
+		"富文本（RichTextLabel）认的是 normal_font —— 对白正文就是它")
+	f_rich.queue_free()
+
+	var f_btn := Button.new()
+	add_child(f_btn)
+	UiTheme.apply_button(f_btn, "default")
+	_ok(f_btn.get_theme_font("font") == fixture, "按钮跟着 fonts.body 走")
+	f_btn.queue_free()
+
+	# 还原，别让替身字体漏到后面的用例里
+	UiTheme._data["fonts"]["body"] = fonts_backup
+	UiTheme._font_cache.clear()
 
 	var preset_count := 0
 	for key in UiTheme.section("buttons").keys():
@@ -522,6 +567,32 @@ func _check_text_effects() -> void:
 
 func _check_motion_parsing() -> void:
 	print("[smoke] 13. 演出动效指令")
+
+	# --- move 的 at 两种写法都要认 ---
+	# 规范写法是位置参数，但编辑器的「移到」下拉写出来的是 `at=`。
+	# 不认 `at=` 的话那条指令的 at 会是空串 —— 表现是「在编辑器里改了位置，
+	# 游戏里纹丝不动」，而且一声不吭（编辑器侧的守卫见 tools/editor/tests/op_spec_test）。
+	var move_at := GvsParser.parse("label start\nmove alice at=left\n", "move_at.gvs")
+	var move_cmd: Dictionary = {}
+	for c in (move_at["commands"] as Array):
+		if String((c as Dictionary).get("op", "")) == "move":
+			move_cmd = c
+	_ok(bool(move_at["ok"]) and String(move_cmd.get("at", "")) == "left",
+		"move 接受 at= 写法（实得 at=「%s」）" % move_cmd.get("at", ""))
+	var move_pos := GvsParser.parse("label start\nmove alice left\n", "move_pos.gvs")
+	var move_cmd2: Dictionary = {}
+	for c in (move_pos["commands"] as Array):
+		if String((c as Dictionary).get("op", "")) == "move":
+			move_cmd2 = c
+	_ok(String(move_cmd2.get("at", "")) == "left", "move 的位置参数写法仍然有效")
+	# 只给坐标时 at 留空 = 不动预设槽
+	var move_xy := GvsParser.parse("label start\nmove alice x=960 y=1100\n", "move_xy.gvs")
+	var move_cmd3: Dictionary = {}
+	for c in (move_xy["commands"] as Array):
+		if String((c as Dictionary).get("op", "")) == "move":
+			move_cmd3 = c
+	_ok(String(move_cmd3.get("at", "x")) == "" and float(move_cmd3.get("x", 0.0)) == 960.0,
+		"只给坐标时 at 留空、坐标生效")
 
 	var result := GvsParser.parse("""
 label start
@@ -3807,6 +3878,100 @@ func _check_media() -> void:
 		"清掉测试注入后回到真实素材根目录")
 	stage.queue_free()
 
+	# --- 淡入的立绘不该「滑进来」（用户报的「第一次入场动画是错的」）---
+	#
+	# 第一次 show 时立绘节点是**刚建的**（位置还在 0,0 附近），而
+	# `position → target` 那个补间照样会跑 —— 看起来就是「明明写的是淡入，
+	# 第一次却从左上角斜着滑进来」。第二次 show 时节点已在目标位
+	# （`_ensure_char` 复用节点、回标题只把 visible 置 false），
+	# 位置补间等于没动，所以「重新加载一次就正常了」。
+	#
+	# 用一个全新的 Stage 保证「第一次 show」这个前提成立。
+	var fresh := Stage.new()
+	get_tree().root.add_child(fresh)
+	await get_tree().process_frame
+
+	fresh.show_char("alice", "normal", "left", "fade", 0.5, {"y": 1600.0})
+	var fade_p0 := fresh.get_char_position("alice")
+	# 拿「默认脚底线」当参照 —— `transition=none` 那条路是已知正确的，
+	# 而且不用去记 CHAR_HEIGHT（位置是「脚底线 - 立绘高」，不是脚底线本身）
+	fresh.show_char("bob", "normal", "left", "none", 0.0, {})
+	var default_p := fresh.get_char_position("bob")
+	_ok(fade_p0.y > default_p.y + 300.0,
+		"y=1600 让立绘明显更低（%.0f vs 默认 %.0f）" % [fade_p0.y, default_p.y])
+	await _wait(0.7)
+	_ok(fresh.get_char_position("alice").is_equal_approx(fade_p0),
+		"淡入全程位置不动（第一次 show 也不滑）")
+
+	# 对照组：滑入**应该**看得见移动 —— 别为了修上面那条把位置补间整个关掉
+	fresh.show_char("bob", "normal", "left", "slide_left", 0.5, {})
+	var slide_x0 := fresh.get_char_position("bob").x
+	await _wait(0.2)
+	_ok(not is_equal_approx(fresh.get_char_position("bob").x, slide_x0),
+		"滑入过程中位置在动（对照组，起点 x=%.0f）" % slide_x0)
+
+	# --- 出场淡入不能被紧跟的移动指令掐死（用户报的）---
+	#
+	# 以前「位移」和「透明度」共用一个补间槽，`move` 会把正在跑的**淡入**一起杀掉，
+	# alpha 停在半路（通常就是 0）—— 立绘**完全看不到**，而且不报错。
+	# 症状：「入场紧跟一条立绘移动，立绘就无法正常入场显示了」。
+	var combo := Stage.new()
+	add_child(combo)
+	await get_tree().create_timer(0.1).timeout
+	combo.show_char("alice", "normal", "", "fade", 0.3, {"x": 460.0, "y": 1600.0})
+	combo.move_char("alice", "center", 0.8, Stage.DEFAULT_EASE, {})
+	await get_tree().create_timer(1.0).timeout
+	var combo_rect := (combo._chars["alice"] as Dictionary)["rect"] as TextureRect
+	_ok(is_equal_approx(combo_rect.modulate.a, 1.0),
+		"入场淡入中途被 move 打断，透明度仍然会补完（实得 %.2f）" % combo_rect.modulate.a)
+	_ok(combo_rect.visible, "而且立绘是可见的")
+
+	# 反向也要成立：退场淡出不该被 move 打断后「卡在半透明」
+	combo.move_char("alice", "left", 0.6, Stage.DEFAULT_EASE, {})
+	combo.hide_char("alice", "fade", 0.3)
+	combo.move_char("alice", "center", 0.2, Stage.DEFAULT_EASE, {})
+	await get_tree().create_timer(0.6).timeout
+	_ok(not combo_rect.visible and is_equal_approx(combo_rect.modulate.a, 0.0),
+		"退场淡出中途被打断也不会卡在半透明（visible=%s alpha=%.2f）"
+		% [combo_rect.visible, combo_rect.modulate.a])
+	combo.queue_free()
+	fresh.queue_free()
+
+	# --- `move` 到槽位必须真的动（用户报的「从左边设置移动到右边没有效果」）---
+	#
+	# `show alice x=460 y=1600` 之后 `move alice right`：以前 `at` 确实变成了
+	# `right`，但 `_char_position_for` 里 `pos_x` 优先 → 立绘停在原地。
+	# show 设的坐标一直活在 entry 里，`move` 只改 at 是盖不过它的。
+	var mover := Stage.new()
+	add_child(mover)
+	await get_tree().create_timer(0.1).timeout
+	mover.show_char("alice", "normal", "", "fade", 0.2, {"x": 460.0, "y": 1600.0})
+	var before_x := mover.get_char_position("alice").x
+	mover.move_char("alice", "right", 0.4, Stage.DEFAULT_EASE, {})
+	await get_tree().create_timer(0.7).timeout
+	var after := mover.get_char_position("alice")
+	_ok(after.x > before_x + 500.0,
+		"坐标摆的立绘 move 到槽位会真的横移（x %.0f → %.0f）" % [before_x, after.x])
+	# 对照：槽位表里**只有横向比率**，所以纵向该保持原样、不跳回默认底线
+	mover.show_char("bob", "normal", "center", "none", 0.0, {})
+	var default_y := mover.get_char_position("bob").y
+	_ok(after.y > default_y + 300.0,
+		"横移之后纵向保持原样（y=%.0f，默认底线 %.0f）" % [after.y, default_y])
+
+	# 对照：`move` 只给坐标（`at` 留空）仍然只覆盖坐标，不动槽位
+	mover.move_char("alice", "", 0.4, Stage.DEFAULT_EASE, {"x": 1500.0})
+	await get_tree().create_timer(0.7).timeout
+	_ok(mover.get_char_position("alice").x > before_x + 900.0,
+		"move 只给坐标时也生效（x=%.0f）" % mover.get_char_position("alice").x)
+
+	# 对照：`move` 同时给槽位与坐标 —— 坐标更具体，以坐标为准
+	mover.move_char("alice", "left", 0.4, Stage.DEFAULT_EASE, {"x": 300.0})
+	await get_tree().create_timer(0.7).timeout
+	_ok(absf(mover.get_char_position("alice").x - (300.0 - Stage.CHAR_WIDTH * 0.5)) < 2.0,
+		"move 同时给槽位与坐标时以坐标为准（x=%.0f）"
+		% mover.get_char_position("alice").x)
+	mover.queue_free()
+
 	# --- 调度器：video 的阻塞与不阻塞 ---
 	await _check_video_flow()
 
@@ -3936,6 +4101,43 @@ func _check_new_features(main_node: Node, runner: ScriptRunner) -> void:
 	var fx_closed := TypingTimeline.build("啊[/fx]！", 10.0)
 	_ok(String(fx_closed.get("display", "")) == "啊！", "[/fx] 只剥离、不漏成正文")
 	_ok((fx_closed.get("events", []) as Array).is_empty(), "[/fx] 不产生触发事件")
+
+	# --- 版式标记：居中旁白 ---
+	var mid := TypingTimeline.build("[center]（又是四月。）", 10.0)
+	_ok(String(mid.get("display", "")) == "（又是四月。）", "[center] 被剥离出显示文本")
+	_ok(String(mid.get("layout", "")) == "center",
+		"版式标记让这一句走居中（实得「%s」）" % mid.get("layout", ""))
+	_ok((mid.get("times", PackedFloat64Array()) as PackedFloat64Array).size() == 7,
+		"版式标记不占可见字符（时间轴长度仍是 7）")
+	# 别名、闭合写法、写在中间都要认
+	_ok(String(TypingTimeline.build("文本[mid]", 10.0).get("layout", "")) == "center",
+		"[mid] 是别名，且写在句尾也认")
+	_ok(String(TypingTimeline.build("[/center]文本", 10.0).get("display", "")) == "文本",
+		"[/center] 只剥离、不漏成正文")
+	_ok(String(TypingTimeline.build("普通旁白", 10.0).get("layout", "")) == "",
+		"没有标记时 layout 为空（走常规对话框）")
+	_ok(TypingTimeline.strip("前[center]后") == "前后", "strip 也剥掉 [center]")
+
+	# --- 版式标记的读写（编辑器「版式」下拉靠这三个函数）---
+	_ok(TypingTimeline.layout_of("[center]文本") == "center", "layout_of 读得出居中")
+	_ok(TypingTimeline.layout_of("文本[mid]") == "center", "layout_of 认别名、认句尾")
+	_ok(TypingTimeline.layout_of("普通文本") == "", "layout_of 没标记时返回空")
+	_ok(TypingTimeline.layout_of("[shake]文本") == "", "其它标记不算版式")
+	_ok(TypingTimeline.with_layout("文本", "center") == "[center]文本",
+		"with_layout 把标记写到句首")
+	_ok(TypingTimeline.with_layout("[center]文本", "center") == "[center]文本",
+		"with_layout 是幂等的（不会写出两个标记）")
+	_ok(TypingTimeline.with_layout("文本[mid]", "") == "文本", "with_layout 传空串 = 去掉标记")
+	# 别名归一：认 [mid]，但写出来只有 [center] 一种形式
+	_ok(TypingTimeline.with_layout("[mid]文本", "center") == "[center]文本",
+		"别名会被归一成规范写法")
+	# 只动版式标记，别的标记与正文一字不差
+	_ok(TypingTimeline.with_layout("[shake]前[wait=0.5]后", "center")
+			== "[center][shake]前[wait=0.5]后",
+		"只加版式标记，其它标记原样保留")
+	_ok(TypingTimeline.strip_layout("[center][shake]文本") == "[shake]文本",
+		"strip_layout 只去版式标记")
+	_ok(TypingTimeline.with_layout("", "center") == "[center]", "空文本也能加标记")
 
 	# --- 效果器清单：解析器 / 运行时 / 编辑器共用一份 ---
 	_ok(AudioFxSpec.is_valid_track("bgm") and AudioFxSpec.is_valid_track("all"),
@@ -4108,6 +4310,35 @@ func _check_new_features(main_node: Node, runner: ScriptRunner) -> void:
 	main_node.call("_stop_auto_features")
 	AudioManager.stop_voice()
 	_ok(not bool(main_node.get("_auto_mode")), "测试后关掉自动播放，不干扰后面的用例")
+
+	# --- 居中旁白：对话框真的换了版式 ---
+	runner.load_text("label start\nnarr [center]（又是四月。）\nnarr 普通旁白。\n",
+		"res://data/scripts/__smoke_center.gvs")
+	runner.start()
+	_ok(dialogue._layout == TypingTimeline.LAYOUT_CENTER, "带 [center] 的旁白切到居中版式")
+	_ok(dialogue._text_label.horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER,
+		"居中版式下文字水平居中")
+	_ok(dialogue._name_plate.visible == false, "旁白没有说话人，名牌不显示")
+	# 铺满全屏（常规对话框是贴底的一条）
+	_ok(is_equal_approx(dialogue._box.anchor_top, 0.0)
+			and is_equal_approx(dialogue._box.anchor_bottom, 1.0),
+		"居中版式下框铺满全屏（anchor %.1f~%.1f）"
+		% [dialogue._box.anchor_top, dialogue._box.anchor_bottom])
+	_ok(dialogue._text_label.get_theme_constant("outline_size") > 0,
+		"没有底板，所以文字带描边（%d）" % dialogue._text_label.get_theme_constant("outline_size"))
+	# ⚠️ 断言的是**画面上那份文本**，不是 `get_full_text()` ——
+	# 后者故意返回原文（`main` 拿它当「这一句的身份证」去查已读记录，
+	# 剥了标记就对不上了）。
+	_ok(not dialogue._text_label.text.contains("[center]"),
+		"标记不会漏到画面上（显示文本 = %s）" % dialogue._text_label.text)
+
+	runner.advance()
+	_ok(dialogue._layout == "", "下一句普通旁白切回常规版式")
+	_ok(dialogue._text_label.horizontal_alignment == HORIZONTAL_ALIGNMENT_LEFT,
+		"常规版式下文字回到左对齐")
+	_ok(is_equal_approx(dialogue._box.anchor_top, 1.0),
+		"常规版式下框回到贴底（anchor_top %.1f）" % dialogue._box.anchor_top)
+	_ok(dialogue._text_label.get_theme_constant("outline_size") == 0, "常规版式不带描边")
 
 	dialogue.hide_box()
 

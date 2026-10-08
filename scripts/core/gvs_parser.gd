@@ -537,6 +537,12 @@ class Builder extends RefCounted:
 			at = tokens[2]
 			kv_start = 3
 		var kv := GvsParser.parse_kv(tokens, kv_start)
+		# ⚠️ `at=` 也要认。规范写法是位置参数（`move alice center`），但编辑器的
+		# 「移到」下拉写出来的是 `at=center` —— 不认的话那条指令的 `at` 会是空串，
+		# 表现是「在编辑器里改了位置，游戏里纹丝不动」，而且**一声不吭**。
+		# `show` 一直是两种都认的，这里对齐。
+		if at.is_empty() and kv.has("at"):
+			at = String(kv["at"])
 		var cmd := {
 			"op": "move",
 			"char": tokens[1],

@@ -37,6 +37,25 @@ const INLINE_DURATION := 0.6
 ## 这些值等价于「清除」
 const CLEAR_ALIASES: PackedStringArray = ["none", "off", "clear"]
 
+## 下面三张表回答「哪个效果器真正用得到哪个参数」——
+## **编辑器据此隐藏无关字段**。
+##
+## 为什么必须区分：三个参数摆在界面上，作者会以为「写了就有用」。
+## 但 `pitch=1.5` 挂到 `muffle` 上是一点作用都没有的（运行时压根不读），
+## 写进剧本只会变成噪音，还让人怀疑「是不是我没调对」。
+## 与其在界面上骗人，不如只显示真正生效的那几个。
+
+## `strength=` 生效的种类（强度 / 深浅）。
+## 注意 `pitch` 不在里面 —— 它的强度由 `pitch=` 本身表达。
+const STRENGTH_KINDS: PackedStringArray = [
+	"glitch", "error", "distortion", "muffle", "radio",
+	"echo", "reverb", "underwater", "amplify",
+]
+
+## `pitch=` 生效的种类。**只有 `pitch` 一个** ——
+## `glitch` / `error` 的音高抖动是内部按 strength 随机生成的，不读这个参数。
+const PITCH_KINDS: PackedStringArray = ["pitch"]
+
 
 static func is_valid_track(track: String) -> bool:
 	return TRACKS.has(track.strip_edges().to_lower())
@@ -48,6 +67,15 @@ static func is_valid_kind(kind: String) -> bool:
 
 static func is_clear(kind: String) -> bool:
 	return CLEAR_ALIASES.has(kind.strip_edges().to_lower())
+
+
+## 真正会挂上效果器的种类（去掉 none / off / clear）—— `duration=` 只对它们有意义。
+static func effect_kinds() -> Array:
+	var out: Array = []
+	for k in KINDS:
+		if not CLEAR_ALIASES.has(k):
+			out.append(k)
+	return out
 
 
 static func list_text() -> String:

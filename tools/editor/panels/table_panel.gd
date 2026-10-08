@@ -38,12 +38,21 @@ extends Control
 const EdTheme = preload("res://tools/editor/ed_theme.gd")
 const LineIndex = preload("res://tools/editor/core/line_index.gd")
 const OpSpec = preload("res://tools/editor/core/op_spec.gd")
+const TypingTimeline = preload("res://scripts/core/typing_timeline.gd")
 
 const W_NO := 40
 const W_DOT := 12
 const W_FOLD := 18
 const W_TAG := 76
 const W_FIELD := 118
+## 对白行那几个下拉的宽度。比指令行的 `W_FIELD` 窄 ——
+## 它们的取值都很短（角色名 / 表情名 / 「默认」「居中」），而台词才是这一行
+## 真正要读要写的东西，宽度该让给它。
+## ⚠️ `OptionButton` 的宽度是 `max(custom_minimum_size, 内容宽度)`，
+## 所以这里给的是**下限**：遇到「alice（缺立绘）」这种长文本它照样会长。
+const W_SAY_SPEAKER := 72
+const W_SAY_EXPR := 84
+const W_SAY_LAYOUT := 58
 const W_NUM := 74
 const W_TEXT := 96
 const ROW_H := 30
@@ -1306,7 +1315,7 @@ func _say_row(line: LineIndex.Line) -> PanelContainer:
 
 	# 角色
 	var char_opt := OptionButton.new()
-	char_opt.custom_minimum_size = Vector2(W_FIELD, 0)
+	char_opt.custom_minimum_size = Vector2(W_SAY_SPEAKER, 0)
 	EdTheme.style_option(char_opt)
 	char_opt.add_item("（旁白）", 0)
 	var ids: PackedStringArray = _ed.index.char_ids()
@@ -1321,6 +1330,9 @@ func _say_row(line: LineIndex.Line) -> PanelContainer:
 		sel = ids.size() + 1
 	char_opt.select(sel)
 	char_opt.tooltip_text = "说话人"
+	# 与指令行的 `field_key` meta 同理：**测试按名字找控件**，不按位置
+	# （对白行的控件个数也会变，比如以后加「语音」下拉）
+	char_opt.set_meta("say_field", "speaker")
 	char_opt.item_selected.connect(func(idx: int) -> void:
 		var txt := char_opt.get_item_text(idx)
 		if txt.ends_with("（缺立绘）"):
@@ -1332,10 +1344,11 @@ func _say_row(line: LineIndex.Line) -> PanelContainer:
 
 	# 表情
 	var expr_opt := OptionButton.new()
-	expr_opt.custom_minimum_size = Vector2(W_FIELD, 0)
+	expr_opt.custom_minimum_size = Vector2(W_SAY_EXPR, 0)
 	EdTheme.style_option(expr_opt)
 	_populate_exprs(expr_opt, line.speaker, line.expr)
 	expr_opt.tooltip_text = "行内表情（写作 角色@表情: 台词）"
+	expr_opt.set_meta("say_field", "expr")
 	expr_opt.item_selected.connect(func(idx: int) -> void:
 		var txt := expr_opt.get_item_text(idx)
 		if txt.ends_with("（缺素材）"):
@@ -1345,11 +1358,38 @@ func _say_row(line: LineIndex.Line) -> PanelContainer:
 		_commit_expr(row, txt))
 	h.add_child(expr_opt)
 
+	# 版式（居中旁白等）。
+	#
+	# **它写的是文本里的 `[center]` 标记，不是行的参数** —— 对白行在 GVS 里
+	# 没有 kv 参数位（`角色: 台词` / `narr 台词`），版式只能挂在文本上。
+	# 下拉只是让作者不用记标记名，与立绘位置的 `at=` 下拉同理。
+	# 选项清单取自 `TypingTimeline.LAYOUT_LABELS`（**唯一一份**，加新版式只改那里）。
+	var layout_opt := OptionButton.new()
+	layout_opt.custom_minimum_size = Vector2(W_SAY_LAYOUT, 0)
+	EdTheme.style_option(layout_opt)
+	layout_opt.add_item("默认", 0)
+	var layout_keys: Array = TypingTimeline.LAYOUT_LABELS.keys()
+	for k in layout_keys.size():
+		layout_opt.add_item(String(TypingTimeline.LAYOUT_LABELS[layout_keys[k]]), k + 1)
+	var cur_layout := TypingTimeline.layout_of(line.text)
+	var lsel := 0
+	for k in layout_keys.size():
+		if String(layout_keys[k]) == cur_layout:
+			lsel = k + 1
+	layout_opt.select(lsel)
+	layout_opt.tooltip_text = "版式（居中旁白写的是台词里的 [center] 标记）"
+	layout_opt.set_meta("say_field", "layout")
+	layout_opt.item_selected.connect(func(idx: int) -> void:
+		var want := "" if idx <= 0 else String(layout_keys[idx - 1])
+		_commit_layout(row, want))
+	h.add_child(layout_opt)
+
 	# 台词
 	var edit := LineEdit.new()
 	edit.text = line.text
 	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_inline_edit(edit, EdTheme.FS_UI)
+	edit.set_meta("say_field", "text")
 	var original := line.text
 	edit.text_submitted.connect(func(t: String) -> void:
 		_commit_text(row, t)
@@ -1374,7 +1414,9 @@ func _say_row(line: LineIndex.Line) -> PanelContainer:
 			_commit_voice(row, voice.text))
 	h.add_child(voice)
 
-	h.add_child(EdTheme.hfill())
+	# ⚠️ **行尾不放 `hfill()`**。台词输入框自己就是 EXPAND 项，再摆一个填充
+	# 会跟它按 ratio 平分富余宽度 —— 表现是「台词右边凭空空出一大块」。
+	# 没有填充时台词吃满剩余宽度，语音列跟在它后面（表格的常规样子）。
 	return row
 
 
@@ -1386,6 +1428,7 @@ func _option_row(line: LineIndex.Line) -> PanelContainer:
 	edit.text = line.text
 	edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	_style_inline_edit(edit, EdTheme.FS_UI)
+	edit.set_meta("option_field", "text")
 	var original := line.text
 	edit.text_submitted.connect(func(t: String) -> void: _commit_option_text(row, t))
 	edit.focus_exited.connect(func() -> void:
@@ -1483,7 +1526,7 @@ func _commit_label_note(row: PanelContainer, note_text: String) -> void:
 		return
 	_ed.doc.set_raw(line.no, _indent_of(line.raw) + text)
 	_refresh_row(line.no)
-	_ed._script_panel.mark_dirty_from_panel()
+	_after_edit(line.no)
 
 
 ## 注释 / 空行
@@ -1511,7 +1554,7 @@ func _directive_row(line: LineIndex.Line) -> PanelContainer:
 	var row := _row_base(line)
 	var h := _hbox_of(row)
 
-	var fields: Array = spec.get("fields", [])
+	var fields: Array = OpSpec.fields_for(line.head, _field_context(line))
 	if fields.is_empty():
 		var l := EdTheme.mono_label(line.raw.strip_edges(), EdTheme.FS_SMALL, EdTheme.TEXT_DIM)
 		l.size_flags_horizontal = Control.SIZE_EXPAND_FILL
@@ -1522,6 +1565,10 @@ func _directive_row(line: LineIndex.Line) -> PanelContainer:
 			var fd: Dictionary = f
 			var ctl := _field_control(line, row, fd)
 			if ctl != null:
+				# 给控件盖一个字段 key。**测试要按名字找控件** ——
+				# 行里的控件个数会随条件显示变化（`audio_fx` 的参数、
+				# 立绘位置切「自定义」后的 x / y），按位置找必然脆。
+				ctl.set_meta("field_key", String(fd.get("key", "")))
 				h.add_child(ctl)
 		h.add_child(EdTheme.hfill())
 	return row
@@ -1556,6 +1603,87 @@ func _pos_shift(line: LineIndex.Line) -> int:
 	if not kw.is_empty() and line.args.size() > 0 and String(line.args[0]) == kw:
 		return 1
 	return 0
+
+
+## 这一行的「条件字段」当前取值 —— 决定哪些参数字段该显示（见 `OpSpec.fields_for`）。
+##
+## 目前两处用得到：
+##   · `audio_fx` 的 `kind` —— 哪个效果器用得到哪个参数
+##   · `show` / `move` 的 `at` —— 选到「自定义」才显示 x / y
+##
+## ⚠️ 「自定义」**不是脚本里的值**：它由「行里有没有 `x=` / `y=`」推导出来。
+## 判据必须与写回逻辑一致 —— 写回的是坐标，不是「自定义」三个字。
+func _field_context(line: LineIndex.Line) -> Dictionary:
+	var fields: Array = OpSpec.get_spec(line.head).get("fields", [])
+	var ctx := {}
+	for key in OpSpec.when_keys(line.head):
+		ctx[key] = _switch_value(line, fields, String(key))
+	return ctx
+
+
+func _switch_value(line: LineIndex.Line, fields: Array, key: String) -> String:
+	var fd := _field_by_key(fields, key)
+	if fd.is_empty():
+		return ""
+	if fd.has("custom") and _is_custom_mode(line, fd):
+		return String((fd["custom"] as Dictionary).get("value", ""))
+	var v: Variant = _field_value(line, fd)
+	return String(fd.get("default", "")) if v == null else _to_str(v)
+
+
+static func _field_by_key(fields: Array, key: String) -> Dictionary:
+	for f in fields:
+		var fd: Dictionary = f
+		if String(fd.get("key", "")) == key:
+			return fd
+	return {}
+
+
+## 行是不是处于「自定义」模式：`custom.sets` 里列出的参数**行里有任何一个**。
+##
+## 不写死 `x` / `y` —— 判据跟着字段规格走，规格改了这里不用动。
+static func _is_custom_mode(line: LineIndex.Line, fd: Dictionary) -> bool:
+	var sets: Dictionary = (fd.get("custom", {}) as Dictionary).get("sets", {})
+	for key in sets.keys():
+		if line.params.has(String(key)):
+			return true
+	return false
+
+
+## 把一个字段从行里删掉。kv 走 `strip_directive_param`；
+## 位置参数写空串 —— 那是「把这个词去掉」（`ScriptDoc.set_directive_arg` 的约定）。
+func _strip_field(no: int, fd: Dictionary) -> void:
+	if fd.has("pos"):
+		_ed.doc.set_directive_arg(no, int(fd["pos"]), "")
+		return
+	_ed.doc.strip_directive_param(no, String(fd.get("key", "")))
+
+
+## 选中「自定义」这类**合成项**时的写回。
+##
+## 写的是 `custom.sets` 里列出的参数（x / y），**并删掉本字段本身** ——
+## 「自定义」三个字写进剧本解析器不认，位置会**静默丢掉**。
+##
+## ⚠️ 顺序：**先写坐标、再删本字段**。反过来的话会短暂产出一个
+## `move alice`（既没有 at 也没有坐标），而解析器要求 `move` 至少三个词。
+func _write_custom(row: PanelContainer, fd: Dictionary) -> void:
+	if not visible or _ed._current_page != "table":
+		return
+	if _stale_row(row):
+		rebuild()
+		return
+	var line := _row_line(row)
+	if line == null:
+		return
+	var custom: Dictionary = fd.get("custom", {})
+	var sets: Dictionary = custom.get("sets", {})
+	_ed.doc.begin_batch()
+	for key in sets.keys():
+		_ed.doc.set_directive_param(line.no, String(key), sets[key])
+	_strip_field(line.no, fd)
+	_ed.doc.end_batch()
+	_refresh_row(line.no)
+	_after_edit(line.no)
 
 
 ## 当前字段的值：位置参数取 args，kv 参数取 params
@@ -1599,8 +1727,13 @@ func _field_write(row: PanelContainer, fd: Dictionary, value: Variant) -> void:
 		# 「Invalid call. Nonexistent 'String' constructor.」——
 		# 界面照常重绘，值却没写进去，看起来就是「点了没反应」。
 		var p := int(fd["pos"]) + _pos_shift(line)
-		var text := _fmt_value(value)
-		if fd.get("quoted", false):
+		# 位置参数没有「默认值」可回退：`null` 表示「把这个词去掉」。
+		# ⚠️ 不能把 null 丢给 `_fmt_value` —— 它对 null 返回 `"<null>"`，
+		# 会写出 `unlock <null> xxx` 这种解析器认不出的东西
+		# （下拉里的「（默认）」项就这么坑过）。
+		var text := "" if value == null else _fmt_value(value)
+		# 空值不加引号 —— 否则会写出 `""`（两个引号字符），清空反而变成写入一个空串
+		if fd.get("quoted", false) and not text.is_empty():
 			text = _quote(text)
 		if fd.get("rest", false):
 			_ed.doc.set_directive_rest(line.no, p, text)
@@ -1614,7 +1747,15 @@ func _field_write(row: PanelContainer, fd: Dictionary, value: Variant) -> void:
 			_ed.doc.strip_directive_param(line.no, key)
 		else:
 			_ed.doc.set_directive_param(line.no, key, value)
+	# 选了「自定义」以外的值时，把自定义模式留下的参数清掉 ——
+	# 不清的话坐标会盖过槽位，表现是「选了 left 还停在 960,1130」。
+	for ckey in ((fd.get("custom", {}) as Dictionary).get("clears", []) as Array):
+		_ed.doc.strip_directive_param(line.no, String(ckey))
 	_refresh_row(line.no)
+	# ⚠️ 光 `_refresh_row` 只重建了**这一行的控件**；源码视图不知道文档变了、
+	# 右侧预览也不会重画。换立绘 / CG / 背景这些下拉全走这里 ——
+	# 以前漏了这一步，表现就是「下拉选了，预览纹丝不动」（用户报的）。
+	_after_edit(line.no)
 
 
 func _asset_field(line: LineIndex.Line, row: PanelContainer, fd: Dictionary) -> Control:
@@ -1635,22 +1776,31 @@ func _asset_field(line: LineIndex.Line, row: PanelContainer, fd: Dictionary) -> 
 	opt.tooltip_text = String(fd.get("label", ""))
 
 	var ids: PackedStringArray = _ed.index.ids(kind)
-	opt.add_item("（未设置）", 0)
+	# ⚠️ **不给「（未设置）」项。** 本项目的素材字段**全是必填的位置参数**
+	# （`bg <背景>` / `show <角色>` / `voice <语音>` …），清空 = 把这个词从行里删掉，
+	# 剩下 `voice volume=1` 这种谁都认不出的指令 —— 解析器不报错
+	# （它把 `volume=1` 当成了 id），只是语音永远播不出来。
+	# 界面不该提供一个「写出来就是坏行」的选项。
+	#
+	# ⚠️ **也不能用 `sel == 0` 当「没找到」的哨兵。**
+	# 下标 0 是合法值（列表里第一个素材），把它和「没找到」混在一起，
+	# 就会出现「列表第一个角色永远显示『（缺文件）』」——
+	# `alice` 正好是排序后的第一个，所以只有她中招（用户报的）。
+	var found := cur_id.is_empty()
 	var sel := 0
 	for k in ids.size():
-		opt.add_item(String(ids[k]), k + 1)
+		opt.add_item(String(ids[k]), k)
 		if String(ids[k]) == cur_id:
-			sel = k + 1
-	if sel == 0 and not cur_id.is_empty():
-		opt.add_item("%s（缺文件）" % cur_id, ids.size() + 1)
-		sel = ids.size() + 1
+			sel = k
+			found = true
+	if not found:
+		opt.add_item("%s（缺文件）" % cur_id, ids.size())
+		sel = ids.size()
 	opt.select(sel)
 	opt.item_selected.connect(func(idx: int) -> void:
 		var txt := opt.get_item_text(idx)
 		if txt.ends_with("（缺文件）"):
 			txt = txt.replace("（缺文件）", "")
-		if idx == 0:
-			txt = ""
 		_field_write(row, fd, txt))
 	box.add_child(opt)
 	return box
@@ -1685,25 +1835,46 @@ func _expr_field(line: LineIndex.Line, row: PanelContainer, fd: Dictionary) -> C
 	return opt
 
 
+## 枚举下拉。
+##
+## ⚠️ **位置参数不给「（默认）」项**：位置参数没有「缺省」可言 ——
+## 选了它只能把这个词删掉，而删掉往往让指令缺参数（`unlock` 少一个类别）。
+## 而且 `_field_write(null)` 对位置参数会写出 `<null>` 那种谁都认不出的东西。
+## 所以只有 kv 形态的枚举才提供「（默认）」= 删掉这个参数、让解析器的默认值生效。
+##
+## 字段带 `custom` 时（立绘的「位置」）在末尾追加一个**合成项**（「自定义」）：
+## 它不在脚本里，选中它是「换一种写法」—— 见 `_write_custom`。
 func _enum_field(line: LineIndex.Line, row: PanelContainer, fd: Dictionary) -> Control:
 	var cur: Variant = _field_value(line, fd)
 	var cur_s := "" if cur == null else _to_str(cur)
 	var values: Array = fd.get("values", [])
+	var has_default := not fd.has("pos")
+	var custom: Dictionary = fd.get("custom", {})
 
 	var opt := OptionButton.new()
 	opt.custom_minimum_size = Vector2(W_FIELD, 0)
 	EdTheme.style_option(opt)
 	opt.tooltip_text = String(fd.get("label", ""))
 
+	var base := 1 if has_default else 0
 	var sel := 0
-	opt.add_item("（默认）", 0)
+	if has_default:
+		opt.add_item("（默认）", 0)
 	for k in values.size():
-		opt.add_item(String(values[k]), k + 1)
+		opt.add_item(String(values[k]), k + base)
 		if String(values[k]) == cur_s:
-			sel = k + 1
+			sel = k + base
+	var custom_index := -1
+	if not custom.is_empty():
+		custom_index = opt.item_count
+		opt.add_item(String(custom.get("value", "自定义")))
+		if _is_custom_mode(line, fd):
+			sel = custom_index
 	opt.select(sel)
 	opt.item_selected.connect(func(idx: int) -> void:
-		if idx == 0:
+		if idx == custom_index:
+			_write_custom(row, fd)
+		elif has_default and idx == 0:
 			# 「默认」= 删掉这个参数，让解析器的默认值生效
 			_field_write(row, fd, null)
 		else:
@@ -2204,8 +2375,7 @@ func _convert_line(no: int, op: String) -> void:
 		text = indent + String(d["text"])
 		unfilled = d["unfilled"]
 		carried = _carry_params(line, op, subject, dropped)
-	_ed.doc.set_raw(no, text)
-	# 把能沿用的参数补上去。
+	_ed.doc.set_raw(no, text)	# 把能沿用的参数补上去。
 	# **位置参数必须走 `set_directive_arg`**：`set_directive_param` 会把它当成
 	# `char=bob` 追加到行尾，而解析器只把「不含 = 的词」当位置参数 ——
 	# 结果是多出一个谁也不认的 kv 参数，角色根本没换过去。
@@ -2224,7 +2394,7 @@ func _convert_line(no: int, op: String) -> void:
 	var msg := "已改为 %s" % ("对白" if op == "__say" else String(
 		OpSpec.get_spec(op).get("label", op)))
 	if unfilled.size() > 0:
-		msg += " —— %s 要自己填（素材索引里没有这类素材）" % " ".join(unfilled)
+		msg += " —— %s 要自己填（占位符没有被自动替换成真实值）" % " ".join(unfilled)
 	elif dropped.size() > 0:
 		msg += "（未沿用：%s）" % " ".join(dropped)
 	_ed._notice_flash(msg, EdTheme.WARN if (unfilled.size() > 0 or dropped.size() > 0) else EdTheme.OK)
@@ -2347,6 +2517,11 @@ func _char_thumb(cid: String, expr: String, size: int) -> Texture2D:
 func _thumb(path: String, size: int) -> Texture2D:
 	if path.is_empty():
 		return null
+	# 目录路径没有缩略图可言 —— 立绘是两级目录，索引里给到的可能是
+	# `sprites/<角色>/` 本身。不挡的话会拿一个**目录**去 `Image.load_from_file`，
+	# 在控制台刷一串红色的 `Error opening file`（作者会以为素材坏了）。
+	if path.ends_with("/"):
+		return null
 	var key := "%s@%d" % [path, size]
 	if _thumb_cache.has(key):
 		return _thumb_cache[key]
@@ -2441,7 +2616,7 @@ func _insert_block(at: int, op: String) -> void:
 	_scroll_to_line(at + 1)
 	_reveal_notice(at + 1)
 	if unfilled.size() > 0:
-		_ed._notice_flash("已插入 %s —— 但 %s 要自己填（素材索引里没有这类素材）"
+		_ed._notice_flash("已插入 %s —— 但 %s 要自己填（占位符没有被自动替换成真实值）"
 			% [op, " ".join(unfilled)], EdTheme.WARN)
 	else:
 		_ed._notice_flash("已插入 %s（第 %d 行）" % [op, at + 1], EdTheme.OK)
@@ -2452,7 +2627,7 @@ func _insert_block(at: int, op: String) -> void:
 ## 行控件常驻，插入之后只需要重刷样式（基本块分隔线 / 块层级缩进会整体位移）。
 func _commit_structural_change(at: int, count: int, what: String) -> void:
 	_sync_after_insert(at, count)
-	_ed._script_panel.mark_dirty_from_panel()
+	_after_edit(at)
 
 
 ## 插入之后如果新行不在视口里（用户正滚在别处看），明确说一声 ——
@@ -2530,16 +2705,19 @@ func _default_text_for(op: String) -> Dictionary:
 	var unfilled := PackedStringArray()
 	for f in (OpSpec.get_spec(op).get("fields", []) as Array):
 		var fd: Dictionary = f
-		if String(fd.get("type", "")) != OpSpec.F_ASSET:
+		var ty := String(fd.get("type", ""))
+		if ty != OpSpec.F_ASSET and ty != OpSpec.F_TEXT and ty != OpSpec.F_LABEL:
 			continue
-		var ph := "<%s>" % String(fd.get("label", "id"))
+		var ph := "<%s>" % String(fd.get("label", fd.get("key", "值")))
 		if not text.contains(ph):
 			continue
-		var ids: PackedStringArray = _ed.index.ids(String(fd.get("kind", "")))
-		if ids.size() > 0:
-			text = text.replace(ph, String(ids[0]))
-		else:
-			unfilled.append(ph)
+		if ty == OpSpec.F_ASSET:
+			var ids: PackedStringArray = _ed.index.ids(String(fd.get("kind", "")))
+			if ids.size() > 0:
+				text = text.replace(ph, String(ids[0]))
+				continue
+		# 自由文本 / 标签引用没有素材索引可查，只能提醒作者自己填
+		unfilled.append(ph)
 	return {"text": text, "unfilled": unfilled}
 
 
@@ -2632,13 +2810,26 @@ func _do_delete(no: int) -> void:
 	# 上一行可能是个默认隐藏的空行，所以要朝上找第一个可见的。
 	_set_current(_nearest_visible(clampi(no - 1, 1, maxi(1, _ed.doc.line_count())), -1))
 	_scroll_to_line(_current_no)
-	_ed._script_panel.mark_dirty_from_panel()
+	_after_edit(_current_no)
 	_ed._notice_flash("已删除：%s" % what, EdTheme.WARN)
 
 
 # ---------------------------------------------------------------------------
 # 提交改动（只重写被改的那一行）
 # ---------------------------------------------------------------------------
+
+## 改动落盘后的统一收尾。
+##
+## 源码视图的改动走 `ScriptPanel.committed` → `Editor._on_doc_committed`；
+## 剧本块的改动以前只 `mark_dirty_from_panel()`（**只置了个「源码视图过期」
+## 标记**），于是右侧预览一直显示旧内容，要点别的行再点回来才刷新（用户反馈）。
+##
+## `line_no` 要传**刚改的那一行** —— 在剧本块里改第 40 行时，源码视图的光标
+## 可能还停在第 3 行，拿光标行去刷新会显示错的那一句。
+func _after_edit(line_no: int) -> void:
+	_ed._script_panel.mark_dirty_from_panel()
+	_ed.notify_doc_edited_from_panel(line_no)
+
 
 func _commit_text(row: PanelContainer, text: String) -> void:
 	if _rebuilding:
@@ -2649,7 +2840,28 @@ func _commit_text(row: PanelContainer, text: String) -> void:
 	_ed.doc.set_dialogue_text(line.no, text)
 	# 内容变了但控件不用重建（否则正在输入的框会被销毁）——只把 meta 里的原文对齐
 	row.set_meta("raw", _ed.doc.text_at(line.no))
-	_ed._script_panel.mark_dirty_from_panel()
+	_after_edit(line.no)
+
+
+## 改版式 = 在台词文本里加 / 去掉 `[center]` 这类标记。
+##
+## 走 `set_dialogue_text` 而不是自己拼字符串 —— 旁白行（`narr …`）、
+## 对白行（`角色: …`）、选项行（`"…" -> 标签`）三种前缀它都处理好了，
+## 而且**只重写这一行**（保真铁律）。
+##
+## 写完要**整行重建**：台词输入框里显示的还是旧文本，不重建就看不到标记。
+func _commit_layout(row: PanelContainer, layout: String) -> void:
+	if _rebuilding:
+		return
+	var line := _row_line(row)
+	if line == null:
+		return
+	var updated := TypingTimeline.with_layout(line.text, layout)
+	if updated == line.text:
+		return
+	_ed.doc.set_dialogue_text(line.no, updated)
+	_refresh_row(line.no)
+	_after_edit(line.no)
 
 
 func _commit_speaker(row: PanelContainer, speaker: String) -> void:
@@ -2658,7 +2870,7 @@ func _commit_speaker(row: PanelContainer, speaker: String) -> void:
 		return
 	_ed.doc.set_dialogue_speaker(line.no, speaker)
 	_refresh_row(line.no)
-	_ed._script_panel.mark_dirty_from_panel()
+	_after_edit(line.no)
 
 
 func _commit_expr(row: PanelContainer, expr: String) -> void:
@@ -2667,7 +2879,7 @@ func _commit_expr(row: PanelContainer, expr: String) -> void:
 		return
 	_ed.doc.set_dialogue_expr(line.no, expr)
 	_refresh_row(line.no)
-	_ed._script_panel.mark_dirty_from_panel()
+	_after_edit(line.no)
 
 
 func _commit_option_text(row: PanelContainer, text: String) -> void:
@@ -2676,7 +2888,7 @@ func _commit_option_text(row: PanelContainer, text: String) -> void:
 		return
 	_ed.doc.set_dialogue_text(line.no, text)
 	row.set_meta("raw", _ed.doc.text_at(line.no))
-	_ed._script_panel.mark_dirty_from_panel()
+	_after_edit(line.no)
 
 
 func _commit_option_target(row: PanelContainer, target: String) -> void:
@@ -2688,7 +2900,7 @@ func _commit_option_target(row: PanelContainer, target: String) -> void:
 		return
 	_ed.doc.set_raw(line.no, line.raw.substr(0, arrow + 2) + " " + target.strip_edges())
 	_refresh_row(line.no)
-	_ed._script_panel.mark_dirty_from_panel()
+	_after_edit(line.no)
 
 
 ## 语音列：改写该对白上方紧邻的 `voice` 指令；没有就新建一条插在台词前

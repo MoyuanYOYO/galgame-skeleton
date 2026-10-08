@@ -1010,6 +1010,12 @@ func _open_at_label_in_table(file_path: String, label: String) -> void:
 ## ⚠️ 只认文件名的话，传完整路径会静默什么都不做（`get_file()` 对不上），
 ## 表现成「点了没反应」，很难查。
 func _open_at_file(file_name: String) -> void:
+	# 已经是当前打开的那个文件 → 直接返回。
+	# 不判断的话会去 `script_files()` 里找，而那个清单**只含 data/scripts/ 下的剧本**；
+	# 打开一个别处的 .gvs（临时文件 / 别的目录）时，点引用就跳不动了。
+	if doc != null and not doc.path.is_empty() \
+			and (doc.path == file_name or doc.path.get_file() == file_name):
+		return
 	for path in ScriptStats.script_files():
 		var p := String(path)
 		if p == file_name or p.get_file() == file_name:
@@ -1077,6 +1083,23 @@ func _on_doc_committed() -> void:
 	_issue_panel.refresh()
 	_push_issues()
 	_preview_panel.show_line_state(caret_line)
+	_refresh_status()
+
+
+## 剧本块改了文档之后调用。
+##
+## 源码视图的改动走 `ScriptPanel.committed` → `_on_doc_committed`，那条路会刷新；
+## 而剧本块的改动以前只 `mark_dirty_from_panel()`（**只置了一个「源码视图过期」
+## 标记**），于是右侧预览一直显示旧内容 —— 要点别的行再点回来才刷新（用户反馈）。
+##
+## `line_no` 是**刚改的那一行**，不是源码视图的光标行：在剧本块里改第 40 行时，
+## 源码视图的光标可能还停在第 3 行，拿光标行去刷新会显示错的那一句。
+func notify_doc_edited_from_panel(line_no: int) -> void:
+	if doc == null:
+		return
+	_issue_panel.refresh()
+	_push_issues()
+	_preview_panel.show_line_state(maxi(1, line_no))
 	_refresh_status()
 
 

@@ -418,9 +418,10 @@ func show_char(char_id: String, expr: String = "normal", at: String = "center",
 	entry["visible"] = true
 
 	var target := _char_position_for(entry)
-	_kill_char_tween(entry)
 
 	if transition == "none" or duration <= 0.0:
+		_kill_char_tween(entry)
+		_kill_char_alpha_tween(entry)
 		rect.visible = true
 		rect.position = target
 		rect.modulate.a = 1.0
@@ -428,22 +429,35 @@ func show_char(char_id: String, expr: String = "normal", at: String = "center",
 
 	rect.visible = true
 	var offset := _entry_offset(transition)
-	if offset.is_zero_approx():
-		if not was_visible:
-			rect.modulate.a = 0.0
-	else:
+	# 「淡入」= 不位移的转场 + 这个角色还没在台上
+	var fading_in := offset.is_zero_approx() and not was_visible
+	_kill_char_alpha_tween(entry)
+
+	if fading_in:
+		# ⚠️ **先把位置摆到目标**，再只补透明度。
+		# 不摆的话：这个节点是刚建的（位置还在默认值），而位移补间照样会跑 ——
+		# 第一次 show 看起来就是**从左上角斜着滑进来**，明明写的是淡入。
+		# 第二次 show 时节点已在目标位（`_ensure_char` 复用节点、
+		# 回标题只把 visible 置 false），位移补间等于没动，所以「重新加载一次就好了」。
+		rect.position = target
+		rect.modulate.a = 0.0
+		var atw := create_tween()
+		atw.tween_property(rect, "modulate:a", 1.0, duration)
+		entry["alpha_tween"] = atw
+	elif not offset.is_zero_approx():
 		# 滑入时 alpha 直接给满。边滑边淡入会显得拖泥带水，
 		# 而且起点在屏幕外，玩家本来就看不到「突然出现」。
 		rect.position = target + offset
 		rect.modulate.a = 1.0
 
-	var tw := create_tween()
-	tw.set_parallel(true)
-	if offset.is_zero_approx():
-		tw.tween_property(rect, "modulate:a", 1.0, duration)
-	tw.tween_property(rect, "position", target, duration).set_trans(
-		Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
-	entry["tween"] = tw
+	# 位移补间：淡入的新角色位置已经到位、不需要动；
+	# 其余情况（滑入 / 已经在台上重新定位）都要看得见移动。
+	_kill_char_tween(entry)
+	if not fading_in:
+		var tw := create_tween()
+		tw.tween_property(rect, "position", target, duration).set_trans(
+			Tween.TRANS_CUBIC).set_ease(Tween.EASE_OUT)
+		entry["tween"] = tw
 
 
 func hide_char(char_id: String, transition: String = "fade", duration: float = 0.3) -> void:
@@ -453,6 +467,7 @@ func hide_char(char_id: String, transition: String = "fade", duration: float = 0
 	var rect := entry["rect"] as TextureRect
 	entry["visible"] = false
 	_kill_char_tween(entry)
+	_kill_char_alpha_tween(entry)
 
 	# 角色离场后状态归零 —— 否则放大过 / 压暗过的角色再次出场还是那个样子
 	var reset := func() -> void:
@@ -470,14 +485,17 @@ func hide_char(char_id: String, transition: String = "fade", duration: float = 0
 		return
 
 	var offset := _entry_offset(transition)
-	var tw := create_tween()
 	if offset.is_zero_approx():
-		tw.tween_property(rect, "modulate:a", 0.0, duration)
-	else:
-		# 滑出：朝屏幕外滑走，alpha 保持不透明，出画后再隐藏
-		tw.tween_property(rect, "position",
-			_char_position_for(entry) + offset, duration).set_trans(
-			Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
+		var atw := create_tween()
+		atw.tween_property(rect, "modulate:a", 0.0, duration)
+		atw.tween_callback(reset)
+		entry["alpha_tween"] = atw
+		return
+	# 滑出：朝屏幕外滑走，alpha 保持不透明，出画后再隐藏
+	var tw := create_tween()
+	tw.tween_property(rect, "position",
+		_char_position_for(entry) + offset, duration).set_trans(
+		Tween.TRANS_CUBIC).set_ease(Tween.EASE_IN)
 	tw.tween_callback(reset)
 	entry["tween"] = tw
 
@@ -575,8 +593,27 @@ func move_char(char_id: String, at: String = "", duration: float = 0.35,
 		return
 	var entry: Dictionary = _chars[char_id]
 	var rect := entry["rect"] as TextureRect
+	# 不在台上的角色移了也看不见 —— 说一声，别让作者对着「怎么没反应」猜。
+	# （典型来源：可重播片段里只写了 move、没写 show，而重播前会清台。）
+	if not bool(entry.get("visible", false)):
+		push_warning("[Stage] move %s：这个角色当前不在台上，移动看不见。"
+			% char_id + "要在重播片段里用的话，前面补一条 show。")
 	if not at.is_empty():
 		entry["at"] = at
+		# ⚠️ **给了槽位就把 pos_x 交还给槽位。**
+		#
+		# 槽位表（`POSITION_RATIOS`）里**只有横向比率** —— 所以「移到某个槽位」
+		# 表达的是**横向**位置。不清 pos_x 的后果是位置纹丝不动：
+		# `show alice x=460 y=1600` 之后 `move alice right`，`at` 确实变成了 right，
+		# 但 `_char_position_for` 里 `pos_x` 优先 → 立绘停在原地（用户报的
+		# 「从左边设置移动到右边没有效果」）。show 设的坐标一直活在 entry 里，
+		# move 只改 at 是盖不过它的。
+		#
+		# `pos_y` **故意保留**：槽位管不着纵向，而作者在 show 里把立绘放低了
+		# （`y=1600`），横着移过去时不该突然跳回默认底线。
+		# 想连纵向一起复位就显式写 `y=`。
+		if not opts.has("x"):
+			entry["pos_x"] = NAN
 	if opts.has("x"):
 		entry["pos_x"] = float(opts["x"])
 	if opts.has("y"):
@@ -924,6 +961,7 @@ func clear() -> void:
 	for char_id in _chars.keys():
 		var entry: Dictionary = _chars[char_id]
 		_kill_char_tween(entry)
+		_kill_char_alpha_tween(entry)
 		var dim_tween := entry.get("dim_tween") as Tween
 		if dim_tween != null and dim_tween.is_valid():
 			dim_tween.kill()
@@ -1046,7 +1084,8 @@ func _ensure_char(char_id: String) -> Dictionary:
 		"expr": "normal",
 		"at": "center",
 		"visible": false,
-		"tween": null,
+		"tween": null,          # 位移补间
+		"alpha_tween": null,    # 透明度补间（与位移分开，见 _kill_char_tween）
 		"scale": 1.0,        # 动画缩放（zoom 指令），临时靠近用
 		"base_scale": 1.0,   # 基准缩放（show / move 的 scale=），与上面相乘
 		"pos_x": NAN,        # 立绘框中心的设计像素 X；NAN = 用 at 预设
@@ -1087,11 +1126,27 @@ func _char_position(at: String) -> Vector2:
 		DESIGN.y - CHAR_HEIGHT + CHAR_BOTTOM_OVERHANG)
 
 
+## 杀掉**位移**补间（move / hop / zoom / shake / 出场滑入 …）。
+##
+## ⚠️ **它和 `_kill_char_alpha_tween` 分开是必须的。**
+## 以前「位移」和「透明度」共用一个槽，于是 `move` 会把正在跑的**淡入**一起杀掉 ——
+## alpha 停在半路（通常是 0），立绘就再也不显示了。
+## 症状：「入场紧跟一条立绘移动，立绘就完全看不到」（用户报的）。
 func _kill_char_tween(entry: Dictionary) -> void:
 	var tw := entry.get("tween") as Tween
 	if tw != null and tw.is_valid():
 		tw.kill()
 	entry["tween"] = null
+
+
+## 杀掉**透明度**补间（出场淡入 / 退场淡出）。
+##
+## 只有 `show` / `hide` / `clear` 该动它 —— 位移类指令碰它就会把淡入掐死。
+func _kill_char_alpha_tween(entry: Dictionary) -> void:
+	var tw := entry.get("alpha_tween") as Tween
+	if tw != null and tw.is_valid():
+		tw.kill()
+	entry["alpha_tween"] = null
 
 
 func _kill_bg_tween() -> void:

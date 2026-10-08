@@ -2,7 +2,8 @@
   "_comment": "全局界面外观配置。改这个文件就能换配色、字体、按钮尺寸与贴图 —— 不需要动一行代码。缺失的键会自动回退到内置默认值。",
   "_textures": "水彩绘本套件：Chrome 无头渲染选型页 CSS（render_css_textures.py），奶油白底 + 珊瑚/薄荷晕染 + 手绘圆角。按钮 hover/pressed/disabled 按亮度与透明度程序化派生。删掉这些 png 不会报错，只会回退成程序化圆角矩形。",
   "fonts": {
-	"_comment": "留空则用 Godot 内置默认字体。支持 .ttf / .otf / .woff2，放在 assets/fonts/ 下。",
+	"_comment": "留空则用 Godot 内置默认字体（中文靠引擎的系统字体回退渲染）。支持 .ttf / .otf / .woff2，放在 assets/fonts/ 下。",
+	"_keys": "body = 界面 / 系统字体（所有 Label、按钮、开关、下拉、回看、存档、设置…）；title = 标题界面主副标题；dialogue = 对白正文与说话人名牌。字号在 font_sizes 段。",
 	"body": "",
 	"title": "",
 	"dialogue": ""
@@ -285,6 +286,25 @@
 	"pad_top": 72,
 	"pad_bottom": 55,
 	"name_pad_h": 24,
-	"name_pad_v": 6
+	"name_pad_v": 6,
+	"_text": "对白文字色。留空则用 palette.text（全界面共用）。想给对白单独配色就填这里。text_dim_color 是「已读文本变暗」用的色（留空 = palette.text_dim）。",
+	"text_color": "",
+	"text_dim_color": ""
+  },
+  "narration": {
+	"_comment": "居中旁白（剧本里写 `narr [center] 文本`）。没有对话框底板，文字直接压在画面中央 —— 所以 offset 是相对**全屏**锚点的，与 dialogue 段分开。texture 留空 = 完全不画底板；想给它加半透明衬底再填贴图路径。",
+	"_contrast": "没有底板，可读性全靠「浅色字 + 深色描边」这对组合（字幕的做法）—— 浅背景靠描边、深背景靠字本身，两边都看得清。text_color 留空则沿用主题正文色（浅色主题下是深墨色，压在画面上会糊，所以这里给了显式值）。",
+	"offset_left": 300,
+	"offset_right": 300,
+	"offset_top": 0,
+	"offset_bottom": 0,
+	"texture": "",
+	"texture_margin": 48,
+	"pad_h": 40,
+	"pad_v": 20,
+	"text_color": "#fdf8f0",
+	"text_dim_color": "",
+	"outline_size": 12,
+	"outline_color": "#241a14"
   }
 }

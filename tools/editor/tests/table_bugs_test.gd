@@ -56,6 +56,9 @@ func _ready() -> void:
 	await _test_toolbar_insert_anchor()
 	await _test_insert_with_filter()
 	await _test_state_bar_follows_current()
+	await _test_preview_follows_edit()
+	await _test_preview_follows_field_edit()
+	await _test_asset_dropdown_first_item()
 
 	_ed.queue_free()
 	await _wait(0.3)
@@ -304,6 +307,79 @@ func _visible_row_count() -> int:
 	return n
 
 
+## 用户报的第三条：**在剧本块里改完一行，右侧预览不更新** ——
+## 要点别的行、再点回来才刷新。
+##
+## 根因：剧本块的改动只 `mark_dirty_from_panel()`（仅置一个「源码视图过期」标记），
+## 而源码视图那条路会 `emit committed` → `Editor._on_doc_committed` → 刷预览。
+## 剧本块少了后半截。
+##
+## ⚠️ 断言必须落在**预览上真的显示出了新台词**，不能只断言「函数被调到了」——
+## 这个 bug 的特征恰恰是「什么都没发生」。
+func _test_preview_follows_edit() -> void:
+	print("-- 改完剧本块，右侧预览要立刻跟上 --")
+	var no := _find_line("alice: 第 3 句。")
+	_ok(no > 0, "找得到要改的那一行")
+	# 点这一行 —— 走真实的「选中行」路径，预览会跟着摆到这一行
+	_tbl._set_current(no)
+	await _wait(0.5)
+	var pv = _ed._preview_panel
+	_ok(pv._dlg_text.text == "第 3 句。", "预览先显示原台词（实得「%s」）" % pv._dlg_text.text)
+
+	# 改台词 —— 走真实的提交路径
+	var row: Control = _tbl._row_by_no.get(no, null)
+	var edit := _find_line_edit(row)
+	_ok(edit != null, "找得到台词输入框")
+	if edit == null:
+		return
+	edit.text = "改过的第三句。"
+	_tbl._commit_text(row, edit.text)
+	await _wait(0.5)
+
+	_ok(_ed.doc.text_at(no) == "alice: 改过的第三句。",
+		"剧本原文改了（实得「%s」）" % _ed.doc.text_at(no))
+	_ok(pv._dlg_text.text == "改过的第三句。",
+		"**预览立刻更新**，不用点别的行再点回来（实得「%s」）" % pv._dlg_text.text)
+	# 说话人也得跟着走（预览里那一行整体是新的）
+	_ok(pv._dlg_name.text == "alice", "预览的说话人没错（实得「%s」）" % pv._dlg_name.text)
+
+
+## 用户报的第四条：**改指令行的下拉（立绘 / CG / 背景）预览不更新**。
+##
+## 根因和第三条同源，但漏的是**另一处**：指令行的所有下拉都走 `_field_write`，
+## 而它只 `_refresh_row`（重建这一行的控件），**没有 `_after_edit`** ——
+## 源码视图不知道文档变了，预览自然也不重画。
+##
+## 教训：改文档的地方有十几处，**收尾必须收敛到一个函数**，
+## 靠「记得加」是守不住的（第三条修完就漏了这一条）。
+func _test_preview_follows_field_edit() -> void:
+	print("-- 改指令行的下拉，预览也要跟上 --")
+	var no := _find_line("bg rooftop")
+	_ok(no > 0, "找得到 bg rooftop 那一行")
+	_tbl._set_current(no)
+	await _wait(0.5)
+	var pv = _ed._preview_panel
+	_ok(pv._stage.get_bg_id() == "rooftop",
+		"预览先显示 rooftop（实得「%s」）" % pv._stage.get_bg_id())
+
+	# 换背景 —— 走真实的下拉信号（按 `field_key` meta 找控件，不按位置）
+	var opt := _field_option(no, "id")
+	_ok(opt != null, "找得到背景下拉")
+	if opt == null:
+		return
+	var idx := _index_of_text(opt, "classroom")
+	_ok(idx >= 0, "下拉里有 classroom（%s）" % str(_opt_texts(opt)))
+	if idx < 0:
+		return
+	opt.item_selected.emit(idx)
+	await _wait(0.6)
+
+	_ok(_ed.doc.text_at(no) == "bg classroom fade=0.6",
+		"剧本原文改了（实得「%s」）" % _ed.doc.text_at(no))
+	_ok(pv._stage.get_bg_id() == "classroom",
+		"**预览立刻换成新背景**（实得「%s」）" % pv._stage.get_bg_id())
+
+
 func _test_state_bar_follows_current() -> void:
 	_sec("bug 1 · 状态条跟着当前行（不再跳回第 1 行）")
 
@@ -469,6 +545,69 @@ func _state_bar_text() -> String:
 				if g is Label:
 					out.append((g as Label).text)
 	return " | ".join(out)
+
+
+## 用户报的第五条：alice 的立绘显示「缺文件」，明明有这个角色。
+##
+## 根因：`_asset_field` 拿 `sel == 0` 当「没找到」的哨兵，而下标 0 是**合法值** ——
+## 列表里**第一个**素材永远被判成「缺文件」。`alice` 正好是排序后的第一个，
+## 所以只有她中招（bg 列表里第一个是 classroom，同理）。
+func _test_asset_dropdown_first_item() -> void:
+	print("-- 素材下拉：第一个不该被判成「缺文件」--")
+	var no := _find_line("bg classroom")
+	_ok(no > 0, "找得到 bg classroom 那一行")
+	var opt := _field_option(no, "id")
+	_ok(opt != null, "找得到背景素材下拉")
+	if opt == null:
+		return
+	var texts := _opt_texts(opt)
+	var bad := ""
+	for t in texts:
+		if String(t).ends_with("（缺文件）"):
+			bad = String(t)
+	_ok(bad.is_empty(), "下拉里没有「（缺文件）」项（实得 %s，列表 %s）" % [bad, str(texts)])
+	_ok(texts[opt.selected] == "classroom",
+		"选中的就是 classroom（实得 %s）" % texts[opt.selected])
+	_ok(texts.size() == 3, "选项数 = 素材数 3（实得 %d）" % texts.size())
+
+
+## 按 `field_key` meta 找指令行的字段控件（`TablePanel._directive_row` 盖的）
+func _field_option(no: int, key: String) -> OptionButton:
+	var row: Control = _tbl._row_by_no.get(no, null)
+	if row == null:
+		return null
+	var c := _find_by_meta(row, "field_key", key)
+	if c is OptionButton:
+		return c as OptionButton
+	return _find_option(c) if c != null else null
+
+
+func _find_by_meta(node: Node, meta: String, value: String) -> Control:
+	if node.has_meta(meta) and String(node.get_meta(meta)) == value:
+		return node as Control
+	for c in node.get_children():
+		var r := _find_by_meta(c, meta, value)
+		if r != null:
+			return r
+	return null
+
+
+static func _opt_texts(opt: OptionButton) -> Array:
+	var out: Array = []
+	if opt == null:
+		return out
+	for i in opt.item_count:
+		out.append(opt.get_item_text(i))
+	return out
+
+
+static func _index_of_text(opt: OptionButton, text: String) -> int:
+	if opt == null:
+		return -1
+	for i in opt.item_count:
+		if opt.get_item_text(i) == text:
+			return i
+	return -1
 
 
 func _find_button(node: Control, text: String) -> Button:

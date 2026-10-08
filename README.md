@@ -137,6 +137,8 @@ Godot 4 视觉小说（galgame）工程骨架。引擎、系统、演出、存�
 - **音乐鉴赏**：曲目列表（当前曲目高亮 + `♪`）+ 可拖拽进度条 + 上一首 / 播放暂停 / 停止 / 下一首 + 播放模式（列表循环 / 单曲循环 / 随机播放 / 顺序播放）
 - **视频鉴赏**：与 CG 同款的解锁网格，点击用内置播放器循环播放（素材需 `.ogv`）
 - **点击停在停顿处**：台词里的 `[wait]` / `[stop]` 都是停顿点，点击快进到下一个停顿点而不是直接给全文
+- **居中旁白**：`narr [center] 文本` 把这一句摆到画面正中（无对话框底板、浅字深描边），
+  位置与配色在 `ui_theme.json` 的 `narration` 段
 - **子过程参数 + 台词插值**：`call 打招呼 who=alice`，台词里写 `{$who}`；还支持 `{$affection.角色}` / `{$flag.旗标}`
 - **演出并行组 `together`**：块内演出同时启动，块结束等最长的那条跑完
 - **打字音效**：每 2 个字一声轻响（内置合成音，没有素材也有手感；放 `assets/audio/se/type.ogg` 可替换）
@@ -201,20 +203,43 @@ BGM 会自动**循环播放**，不用在导入设置里勾 Loop —— 代码�
 
 ### 换字体
 
-1. 把 `.ttf` / `.otf` 放进 `assets/fonts/`
-2. 在配置里填路径：
+1. 把 `.ttf` / `.otf` / `.woff2` 放进 `assets/fonts/`
+2. 在 `data/ui/ui_theme.json` 里填路径：
 
 ```json
 "fonts": {
-  "body": "res://assets/fonts/main.ttf",
-  "title": "res://assets/fonts/title.ttf",
+  "body":     "res://assets/fonts/main.ttf",
+  "title":    "res://assets/fonts/title.ttf",
   "dialogue": "res://assets/fonts/main.ttf"
 }
 ```
 
-留空 = 用 Godot 内置默认字体。文件不存在会打警告并自动回退，**不会崩**。
+| 键 | 管什么 |
+|---|---|
+| `body` | **界面 / 系统字体** —— 所有 Label、按钮、开关、下拉、回看、存档、设置… |
+| `title` | 标题界面的主标题与副标题 |
+| `dialogue` | 对话框里的**对白正文**与说话人名牌 |
 
-字号在同文件的 `font_sizes` 段：`title` / `subtitle` / `heading` / `dialogue` / `speaker` / `backlog` / `button` / `label` / `small`。
+留空 = 用 Godot 内置默认字体（中文靠引擎的系统字体回退渲染）。
+文件不存在会打警告并自动回退，**不会崩**。
+
+字号在同文件的 `font_sizes` 段：`title` / `subtitle` / `heading` / `dialogue` /
+`speaker` / `backlog` / `button` / `label` / `small`。
+
+### 换对白的颜色
+
+对白文字色**可以单独配**，不用动全局调色板（`palette.text` 是全界面共用的）：
+
+```json
+"dialogue": {
+  "text_color":     "#3a2f28",
+  "text_dim_color": "#a89a8c"
+}
+```
+
+留空 = 沿用 `palette.text` / `palette.text_dim`。居中旁白另有自己的
+`narration.text_color` / `narration.text_dim_color` / `outline_*`。
+说话人名牌的底色是 `palette.name_plate`、字色是 `palette.speaker`。
 
 ### 换按钮尺寸
 
@@ -706,6 +731,7 @@ alice: 这一句[speed=3]三倍速冲过去[/speed]，然后[wait=0.9]停顿一�
 | `[speed=3]...[/speed]` | 这一段按 3 倍速逐字显示 |
 | `[stop]` | 在此处**停下等点击**，点了才接着显示（别名 `[click]`） |
 | `[fx=glitch]` | 在此处触发一次音频效果器，见「音频效果器」一节 |
+| `[center]` | 这一句摆到**画面正中**显示（居中旁白），见下 |
 
 基准速度是玩家设置里的「文字速度」（默认 45 字/秒），`[speed=N]` 是相对它的倍数。
 
@@ -724,6 +750,23 @@ alice: 这……这不可能[fx=glitch bus=voice]！
 
 **标记只会留在对话框里**。回看面板和存档预览显示的是剥掉标记之后的文本 ——
 不剥的话，那两处会直接出现 `[wait=0.7]`、`[stop]`、`[fx=glitch]` 这样的字样。
+
+### 居中旁白
+
+```gvs
+narr [center]（——又是四月。这一次，我大概知道该说什么了。）
+```
+
+这一句摆到画面正中：**不画对话框底板**，文字直接压在画面上，浅色字 + 深色描边
+（字幕的做法，浅背景靠描边、深背景靠字本身，两边都看得清）。
+打字机、停顿点、`[fx=…]` 全都照常工作。
+
+**编辑器里不用手写标记**：剧本块的对白行有一个「版式」下拉（旁白和角色台词都有），
+选「居中」就把 `[center]` 写进台词、选「默认」就去掉。
+
+位置 / 内边距 / 字色 / 描边都在 `data/ui/ui_theme.json` 的 `narration` 段 ——
+它和 `dialogue` 段分开，因为旁白的 offset 相对**全屏**锚点、对话框相对**底边**锚点，
+混在一起会让「改旁白的边距」连带把对话框也挪了。
 
 ---
 
@@ -747,6 +790,15 @@ move alice center duration=0.8 ease=out_cubic   # 带缓动的位移
 | `move <角色> <位置>` | 位移 | `duration` `ease` |
 
 > 跳跃用 `hop` 而不是 `jump` —— `jump` 已经被标签跳转占用了。
+
+**`move` 的两条语义**（踩过坑，值得先读）：
+
+- **只移动已经在台上的立绘** —— 它不会让还没出场的角色出现。可重播片段里要自带 `show`。
+- **移到槽位 = 横向移动**。槽位表里只有横向比率（`left` / `center` / `right` /
+  `off_left` / `off_right`），所以 `move alice right` 只改 X，**Y 保持原样** ——
+  你用 `y=1600` 把立绘放低了，横着移过去时不会突然跳回默认底线。想连纵向一起复位就写 `y=`。
+  这条也意味着**坐标不会挡住槽位**：`show alice x=460 y=1600` 之后 `move alice right`
+  会真的横移过去。
 
 **入场 / 出场方式**用 `type=` 指定：
 
@@ -781,6 +833,8 @@ hide alice type=slide_right fade=0.5            # 朝右侧滑出
 show alice expr=smile x=680 y=1130 scale=0.9 fade=0.5
 show bob   at=right y=1080 scale=1.1              # 只覆盖 y 与大小，X 仍走预设
 move alice x=960 y=1130 duration=0.6 ease=out_cubic
+move bob   at=right                               # 槽位 → 横移，Y 不动
+move bob   at=right y=1130                        # 槽位 + 纵向一起复位
 ```
 
 | 参数 | 含义 |
@@ -1073,17 +1127,21 @@ alice: 这……这不可能[fx=glitch bus=voice]！  # 或在文字显示的中
 | `all` | 三条一起 |
 | `master` | 总输出（会带上 UI 音效，慎用） |
 
-| 效果 | 听感 |
-|---|---|
-| `glitch` | 数字故障、断续跳变 |
-| `error` | 损坏 / 错误音 |
-| `distortion` | 过载失真 |
-| `pitch` | 移调（`pitch=` >1 变尖、<1 变沉） |
-| `muffle` / `underwater` | 闷住 / 水下 |
-| `radio` | 无线电、对讲机 |
-| `echo` / `reverb` | 回声 / 混响 |
-| `amplify` | 增益强调 |
-| `none` / `off` / `clear` | 清除该音轨上挂的效果 |
+| 效果 | 听感 | 用得到的参数 |
+|---|---|---|
+| `glitch` | 数字故障、断续跳变 | 时长 · 强度 |
+| `error` | 损坏 / 错误音 | 时长 · 强度 |
+| `distortion` | 过载失真 | 时长 · 强度 |
+| `pitch` | 移调（`pitch=` >1 变尖、<1 变沉） | 时长 · 移调 |
+| `muffle` / `underwater` | 闷住 / 水下 | 时长 · 强度 |
+| `radio` | 无线电、对讲机 | 时长 · 强度 |
+| `echo` / `reverb` | 回声 / 混响 | 时长 · 强度 |
+| `amplify` | 增益强调 | 时长 · 强度 |
+| `none` / `off` / `clear` | 清除该音轨上挂的效果 | — |
+
+**三个参数不是每个效果都用得到** —— 上表「用得到的参数」列就是运行时真正会读的那些，
+编辑器也只显示这些（选了 `muffle` 就不会出现「移调」那种写了也没用的框）。
+`strength=1.0` 是基准值，越大效果越深。
 
 - `duration=0` 表示持续到显式清除；不写默认 0.8 秒后自动清除。
 - 同一音轨上效果器**互斥**（新的一次先清上一次），链不会越挂越长。
@@ -1178,16 +1236,51 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 
 写剧本时不用再「改剧本 → 重启 → 从头点到那一句」。
 
+### 剧本编辑器（`tools/editor/`）
+
+双击 `start-editor.bat` 打开（或直接跑 `tools/editor/editor.tscn`）。三个页面：
+**剧本块**（表格化改剧本，保真写回）、**源码**、**素材**。
+
+- **所有指令都能编辑**，只是入口不同：对白行 `Enter` 插入；普通指令在「指令类型」
+  下拉里换；`if` / `elif` / `else` / `end` / `choice` / `together` 这类块级指令在
+  「流程」「结构 / 跳转」组里插。台词内联标记（`[wait=]` `[stop]` `[fx=…]`）
+  直接敲在台词里，`F1` 面板有速查表。
+- **字段按需显示**：`audio_fx` 只显示当前效果真正用得到的参数（见「音频效果器」一节）；
+  立绘的**「位置」下拉多一个「自定义」**，选中它才会出现 `x` / `y` 输入框
+  （选中它 = 清掉槽位、写入坐标；再选回槽位会把坐标清掉，免得坐标盖过槽位）。
+- `pause` 是 `wait_click` 的别名，菜单里只留规范写法；旁白走说话人下拉的
+  「（旁白）」，不单独列 `narr`。
+- **改完立刻能看见**：在剧本块里改一行，右侧预览马上跟着更新（不用点别的行再点回来）——
+  包括换立绘 / CG / 背景这些下拉。
+- **「从此处预览」会先摆好之前的画面**（背景 / 立绘位置 / 表情都按前面几行的累积结果），
+  再从光标那一行往后跑 —— 所以中途移动过、换过表情的立绘，预览里的位置就是游戏里的位置。
+- **说话人可以在旁白与角色之间来回换**：旁白行选个角色就变成 `角色: 台词`，
+  角色行选「（旁白）」就变回 `narr 台词`（两个方向都不会留下多余的冒号）。
+- **变量页**（侧栏「变量」标题旁的「详细」）：**单击一个变量 = 选中**，
+  右侧侧边栏列出它**全部**读写位置，每条都能点着跳过去。
+  只写不读 / 只读不写会直接写在侧边栏的摘要里。
+- **已知限制**：`minigame` 的 `k=v` 参数（`rounds=` / `need=` …）是自由形式的，
+  取决于具体小游戏，编辑器只给 `id` 一个字段 —— 那些参数会被原样保留，但不能在界面上改。
+- 有一套 **OpSpec ↔ 解析器一致性守卫**（`op_spec_test`）盯着「编辑器能写、解析器不读」
+  这类静默失效 —— `move alice at=center` 曾经被静默丢掉，就是它抓出来的。
+
 ---
 
 ## 测试
 
 ```bash
-# 回归测试 · headless（954 项断言，快，适合 CI）
+# 回归测试 · headless（990 项断言，快，适合 CI）
 "D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/smoke.tscn
 
-# 回归测试 · 窗口模式（959 项，多覆盖「真实输入模拟」一节）
+# 回归测试 · 窗口模式（995 项，多覆盖「真实输入模拟」一节）
 "D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/smoke.tscn
+
+# 编辑器：OpSpec ↔ 解析器一致性守卫（headless）
+# 「编辑器能写、解析器不读」这类静默失效就是它抓的（`move at=` 曾经被静默丢掉）
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/editor/tests/op_spec_test.tscn
+
+# 编辑器：立绘位置「自定义」下拉的端到端验收（要窗口）
+"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/editor/tests/pos_custom_test.tscn
 
 # 自动截图：依次驱动全部界面并各存一张 PNG（共 14 张）
 "D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/capture.tscn

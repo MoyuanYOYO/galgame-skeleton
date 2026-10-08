@@ -18,6 +18,10 @@ extends Control
 ##
 ## **内联音频效果器**：剧本 `[fx=glitch bus=bgm]` 这类标记会在
 ## 显示到那个字时触发一次音频效果 —— 由本类负责在正确的时刻调 AudioManager。
+##
+## **居中旁白**：台词里写 `[center]`（别名 `[mid]`）就把这一句摆到画面正中，
+## 不画对话框底板、文字居中。版式标记由 `TypingTimeline` 剥出来（见它的
+## `layout` 键），本类只负责按它切版式。
 
 signal advance_requested()
 ## 玩家点了说话人名字牌 —— 通常用来重播这一句的语音
@@ -32,6 +36,15 @@ const TYPING_SFX_INTERVAL := 2
 @onready var _name_label: Label = %NameLabel
 @onready var _text_label: RichTextLabel = %TextLabel
 @onready var _indicator: Control = %Indicator
+## 场景里这两个节点没有 unique name，按路径取 ——
+## 给它们加 unique name 要动 main.tscn，而这里只有两个稳定的路径。
+@onready var _vbox: VBoxContainer = _box.get_node("VBox")
+@onready var _name_row: HBoxContainer = _box.get_node("VBox/NameRow")
+
+## 常规版式下的对话框底板（在 _ready 里定下来，切回时要用）
+var _normal_box_style: StyleBox = null
+## 当前版式（"" = 常规 / "center" = 居中旁白）
+var _layout: String = ""
 
 var _full_text: String = ""
 var _reveal_start_ms: int = 0
@@ -69,6 +82,8 @@ func _ready() -> void:
 	if not _box.has_theme_stylebox_override("panel"):
 		_box.add_theme_stylebox_override("panel", UiTheme.dialogue_stylebox(
 			Color(UiTheme.BG_DEEP.r, UiTheme.BG_DEEP.g, UiTheme.BG_DEEP.b, 0.97)))
+	# 记下「常规版式长什么样」，切回时原样还原（可能是作者手改过的样式）
+	_normal_box_style = _box.get_theme_stylebox("panel")
 	if not _name_plate.has_theme_stylebox_override("panel"):
 		_name_plate.add_theme_stylebox_override("panel", UiTheme.nameplate_stylebox(
 			Color(UiTheme.NAME_PLATE.r, UiTheme.NAME_PLATE.g, UiTheme.NAME_PLATE.b, 0.98)))
@@ -160,8 +175,14 @@ func _tick_typing_sfx(reveal: int) -> void:
 ## already_read 由调用方传入，而不是这里自己查 ReadTracker ——
 ## _on_say 在显示之前就把它标记成已读，这里再查永远是「已读」。
 func show_line(speaker: String, text: String, already_read: bool = false) -> void:
-	visible = true
 	_full_text = text
+
+	# 先把节奏 / 版式标记编译出来，**再**决定版式和可见性 ——
+	# 顺序反了会先闪一帧常规对话框再跳到画面中间。
+	var speed := maxf(1.0, float(ConfigManager.get_value("text_speed", 45.0)))
+	var compiled := TypingTimeline.build(text, speed)
+	_apply_layout(String(compiled.get("layout", "")))
+	visible = true
 
 	if speaker.is_empty():
 		_name_plate.visible = false
@@ -172,14 +193,10 @@ func show_line(speaker: String, text: String, already_read: bool = false) -> voi
 	# 已读文本变暗：只改**默认字色**，不去给文本包一层 [color] ——
 	# 包起来会跟剧本里已有的颜色标记、自定义特效打架。
 	var dim := already_read and bool(ConfigManager.get_value("dim_read_text", false))
-	_text_label.add_theme_color_override(
-		"default_color", UiTheme.TEXT_DIM if dim else UiTheme.TEXT)
+	_text_label.add_theme_color_override("default_color", _text_color(dim))
 
-	# 先把节奏标记编译成时间轴，再交给 RichTextLabel 渲染。
-	# 顺序很重要：display 里已经剥掉了 [wait=] / [stop] / [fx=]，
+	# display 里已经剥掉了 [wait=] / [stop] / [fx=] / [center]，
 	# 所以「可见字符数」和「时间轴长度」必然一致。
-	var speed := maxf(1.0, float(ConfigManager.get_value("text_speed", 45.0)))
-	var compiled := TypingTimeline.build(text, speed)
 	_text_label.text = String(compiled.get("display", text))
 	var times: PackedFloat64Array = compiled.get("times", PackedFloat64Array())
 	_timeline = times
@@ -195,6 +212,82 @@ func show_line(speaker: String, text: String, already_read: bool = false) -> voi
 	_typing = true
 	_stop_indicator()
 	set_process(true)
+
+
+# ---------------------------------------------------------------------------
+# 版式：常规对话框 / 居中旁白
+# ---------------------------------------------------------------------------
+
+## 切版式。`mode` 为空 = 常规对话框，`TypingTimeline.LAYOUT_CENTER` = 居中旁白。
+##
+## 居中旁白长什么样：
+##   · 框铺满全屏（offset 来自 `ui_theme.json` 的 narration 段），内容**垂直居中**
+##   · **不画底板**（默认透明）—— 文字直接压在画面上
+##   · 文字水平居中、说话人名牌也跟着居中
+##   · 文字加**描边**：没有底板垫着，浅色背景上白字会看不见
+##
+## 名字牌**不隐藏**：`narr` 本来就没有说话人，会走 speaker 为空那条路；
+## 而 `alice: [center]……` 这种「角色台词也居中」的写法，名牌居中显示在文字上方。
+func _apply_layout(mode: String) -> void:
+	if _layout == mode:
+		return
+	_layout = mode
+	var center := mode == TypingTimeline.LAYOUT_CENTER
+
+	if center:
+		# 铺满全屏。offset 相对**全屏**锚点，所以左右留边距、上下不留。
+		_box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_box.offset_left = UiTheme.narration_value("offset_left", 300.0)
+		_box.offset_top = UiTheme.narration_value("offset_top", 0.0)
+		_box.offset_right = -UiTheme.narration_value("offset_right", 300.0)
+		_box.offset_bottom = -UiTheme.narration_value("offset_bottom", 0.0)
+		_box.add_theme_stylebox_override("panel", UiTheme.narration_stylebox())
+		_vbox.alignment = BoxContainer.ALIGNMENT_CENTER
+		_name_row.alignment = BoxContainer.ALIGNMENT_CENTER
+		_text_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_text_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	else:
+		# 常规：回到底边锚点，尺寸取自 dialogue 段
+		_box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+		_box.offset_left = UiTheme.dialogue_value("offset_left", 130.0)
+		_box.offset_top = UiTheme.dialogue_value("offset_top", -320.0)
+		_box.offset_right = UiTheme.dialogue_value("offset_right", -130.0)
+		_box.offset_bottom = UiTheme.dialogue_value("offset_bottom", -70.0)
+		if _normal_box_style != null:
+			_box.add_theme_stylebox_override("panel", _normal_box_style)
+		_vbox.alignment = BoxContainer.ALIGNMENT_BEGIN
+		_name_row.alignment = BoxContainer.ALIGNMENT_BEGIN
+		_text_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+		_text_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+
+	_apply_text_outline(center)
+
+
+## 对白文字色。
+##
+## 常规版式取 `dialogue.text_color`，居中旁白取 `narration.text_color`；
+## 两边都没配就回退到主题正文色 —— 于是「不动配置」的行为和以前完全一样。
+##
+## 已读变暗另有自己的键（`text_dim_color`），不是把正文色算个透明度：
+## 深色底上「变暗」和「变亮」都可能对，交给作者定。
+func _text_color(dim: bool) -> Color:
+	var group := "narration" if _layout == TypingTimeline.LAYOUT_CENTER else "dialogue"
+	var base := UiTheme.section_color(group, "text_color", UiTheme.TEXT)
+	if not dim:
+		return base
+	return UiTheme.section_color(group, "text_dim_color", UiTheme.TEXT_DIM)
+
+
+## 居中旁白没有底板垫着，所以给文字加描边。常规版式把描边关掉
+## （有底板时描边只会让字变脏）。
+func _apply_text_outline(on: bool) -> void:
+	var size := int(UiTheme.narration_value("outline_size", 12.0)) if on else 0
+	_text_label.add_theme_constant_override("outline_size", size)
+	if size <= 0:
+		return
+	var raw := UiTheme.section_text("narration", "outline_color", "#0b0a14")
+	_text_label.add_theme_color_override("font_outline_color",
+		Color.from_string(raw, Color(0.04, 0.04, 0.08)))
 
 
 ## 玩家点击推进。

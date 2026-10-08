@@ -66,9 +66,11 @@ func _ready() -> void:
 		Color(0, 0, 0, 0.45))
 	_title_label.add_theme_constant_override("shadow_offset_y", 4)
 	_title_label.add_theme_constant_override("shadow_outline_size", 2)
-	UiTheme.apply_label(_title_label, UiTheme.color("title_text", UiTheme.TEXT), 78)
+	# 标题用 `fonts.title`（副标题也用 —— 它是标题块的一部分，跟着一起换才协调），
+	# 其余界面文字走默认的 `fonts.body`。
+	UiTheme.apply_label(_title_label, UiTheme.color("title_text", UiTheme.TEXT), 78, "title")
 	UiTheme.apply_label(_subtitle_label,
-		UiTheme.color("title_text_dim", UiTheme.TEXT_DIM), 24)
+		UiTheme.color("title_text_dim", UiTheme.TEXT_DIM), 24, "title")
 	# 「开始游戏」是主按钮（玫红），其余是白芯片 —— 与选型页 mockup 一致
 	for button in [_start_button, _continue_button, _load_button,
 			_gallery_button, _records_button, _settings_button, _quit_button]:

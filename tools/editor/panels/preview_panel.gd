@@ -23,6 +23,7 @@ const ScriptRunnerScript = preload("res://scripts/core/script_runner.gd")
 const ScreenFxSpec = preload("res://scripts/core/screen_fx_spec.gd")
 const LineIndex = preload("res://tools/editor/core/line_index.gd")
 const TypingTimeline = preload("res://scripts/core/typing_timeline.gd")
+const UiTheme = preload("res://scripts/ui/ui_theme.gd")
 
 const DESIGN := Vector2i(1920, 1080)
 
@@ -37,6 +38,20 @@ var _runner: Node
 var _dlg_box: PanelContainer
 var _dlg_name: Label
 var _dlg_text: RichTextLabel
+var _dlg_vb: VBoxContainer
+## 常规版式的样式盒（切到居中旁白再切回来时要还原）
+var _dlg_normal_style: StyleBox
+var _dlg_centered: bool = false
+
+## 预览里常规对话框的几何与配色 —— **编辑器自己的样式**，不是游戏主题
+## （预览只是近似，不去复刻 ui_theme.json 的整套贴图）。
+## 居中旁白是例外：它的位置/配色**直接读游戏主题的 narration 段**，
+## 因为「旁白摆哪儿」正是作者要在预览里确认的东西。
+const DLG_MARGIN_X := 150.0
+const DLG_TOP := -300.0
+const DLG_BOTTOM := -80.0
+const DLG_TEXT_COLOR := Color("#efe7e0")
+const DLG_NAME_COLOR := Color("#f0a190")
 var _choice_wrap: Control
 var _choice_list: VBoxContainer
 
@@ -222,10 +237,10 @@ func _build_dialogue() -> void:
 	_dlg_box = PanelContainer.new()
 	_dlg_box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
 	_dlg_box.anchor_top = 1.0
-	_dlg_box.offset_left = 150.0
-	_dlg_box.offset_right = -150.0
-	_dlg_box.offset_top = -300.0
-	_dlg_box.offset_bottom = -80.0
+	_dlg_box.offset_left = DLG_MARGIN_X
+	_dlg_box.offset_right = -DLG_MARGIN_X
+	_dlg_box.offset_top = DLG_TOP
+	_dlg_box.offset_bottom = DLG_BOTTOM
 	_dlg_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
 
 	var sb := StyleBoxFlat.new()
@@ -244,16 +259,18 @@ func _build_dialogue() -> void:
 	sb.border_width_bottom = 1
 	sb.border_color = Color(1, 1, 1, 0.12)
 	_dlg_box.add_theme_stylebox_override("panel", sb)
+	_dlg_normal_style = sb
 	_vp.add_child(_dlg_box)
 
 	var vb := VBoxContainer.new()
 	vb.add_theme_constant_override("separation", 10)
 	_dlg_box.add_child(vb)
+	_dlg_vb = vb
 
 	_dlg_name = Label.new()
 	_dlg_name.add_theme_font_override("font", EdTheme.ui())
 	_dlg_name.add_theme_font_size_override("font_size", 30)
-	_dlg_name.add_theme_color_override("font_color", Color("#f0a190"))
+	_dlg_name.add_theme_color_override("font_color", DLG_NAME_COLOR)
 	vb.add_child(_dlg_name)
 
 	_dlg_text = RichTextLabel.new()
@@ -263,7 +280,7 @@ func _build_dialogue() -> void:
 	_dlg_text.size_flags_vertical = Control.SIZE_EXPAND_FILL
 	_dlg_text.add_theme_font_override("normal_font", EdTheme.ui())
 	_dlg_text.add_theme_font_size_override("normal_font_size", 32)
-	_dlg_text.add_theme_color_override("default_color", Color("#efe7e0"))
+	_dlg_text.add_theme_color_override("default_color", DLG_TEXT_COLOR)
 	# ⚠️ **必须登记自定义特效**，否则 `[bounce]` / `[blink]` / `[glitch]` 会因为
 	# 「未知标签」**连方括号一起漏成正文**（用户报的「有些文本特效没有在预览窗口实现」）。
 	# 登记的是和对白框 / 回看同一份实例（`TextEffects.all()`），不会各漏各的。
@@ -451,16 +468,72 @@ func _char_opts(cmd: Dictionary) -> Dictionary:
 # 对白与选项
 # ---------------------------------------------------------------------------
 
+## 把一句台词摆进预览对话框。
+##
+## **两个入口共用**：跑剧本时的 `_on_say`、跟随光标时的 `_apply_follow`。
+## 各写一遍的话，居中旁白只会在其中一处生效 —— 作者会以为「跟随光标时版式不对」。
+##
+## 顺带剥掉节奏 / 版式标记（`[wait=0.7]` / `[center]`）：那些是给打字机与版式用的，
+## 预览里没有打字机，留着会原样显示成方括号。文字特效（`[bounce]` 等）保留，
+## 由 `_dlg_text.custom_effects` 渲染成真效果。
+func _show_dialogue(speaker: String, text: String) -> void:
+	var compiled := TypingTimeline.build(text, 1.0)
+	_apply_dialogue_layout(String(compiled.get("layout", "")) == TypingTimeline.LAYOUT_CENTER)
+	_dlg_name.text = speaker
+	_dlg_name.visible = not speaker.is_empty()
+	_dlg_text.text = String(compiled.get("display", text))
+	_dlg_box.visible = true
+
+
+## 居中旁白：预览里的对话框也摆到画面正中，与游戏一致。
+##
+## 位置 / 字色 / 描边**直接读游戏主题的 `narration` 段** ——
+## 预览的 SubViewport 就是 1920×1080 设计分辨率，offset 可以原样用，
+## 所以作者在预览里看到的位置就是游戏里的位置。
+## （常规对话框仍用编辑器自己的样式，那只是近似，不去复刻整套贴图。）
+func _apply_dialogue_layout(center: bool) -> void:
+	if _dlg_centered == center:
+		return
+	_dlg_centered = center
+	if center:
+		_dlg_box.set_anchors_preset(Control.PRESET_FULL_RECT)
+		_dlg_box.offset_left = UiTheme.narration_value("offset_left", 300.0)
+		_dlg_box.offset_top = UiTheme.narration_value("offset_top", 0.0)
+		_dlg_box.offset_right = -UiTheme.narration_value("offset_right", 300.0)
+		_dlg_box.offset_bottom = -UiTheme.narration_value("offset_bottom", 0.0)
+		_dlg_box.add_theme_stylebox_override("panel", UiTheme.narration_stylebox())
+		_dlg_vb.alignment = BoxContainer.ALIGNMENT_CENTER
+		_dlg_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_dlg_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+		_dlg_text.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+		# 没有底板垫着，字色 + 描边都得跟着走，否则深墨色压在画面上看不见
+		_dlg_text.add_theme_color_override("default_color",
+			UiTheme.section_color("narration", "text_color", DLG_TEXT_COLOR))
+		_dlg_text.add_theme_constant_override("outline_size",
+			int(UiTheme.narration_value("outline_size", 12.0)))
+		_dlg_text.add_theme_color_override("font_outline_color",
+			UiTheme.section_color("narration", "outline_color", Color("#241a14")))
+		return
+	_dlg_box.set_anchors_preset(Control.PRESET_BOTTOM_WIDE)
+	_dlg_box.anchor_top = 1.0
+	_dlg_box.offset_left = DLG_MARGIN_X
+	_dlg_box.offset_right = -DLG_MARGIN_X
+	_dlg_box.offset_top = DLG_TOP
+	_dlg_box.offset_bottom = DLG_BOTTOM
+	if _dlg_normal_style != null:
+		_dlg_box.add_theme_stylebox_override("panel", _dlg_normal_style)
+	_dlg_vb.alignment = BoxContainer.ALIGNMENT_BEGIN
+	_dlg_name.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_dlg_text.horizontal_alignment = HORIZONTAL_ALIGNMENT_LEFT
+	_dlg_text.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	_dlg_text.add_theme_color_override("default_color", DLG_TEXT_COLOR)
+	_dlg_text.add_theme_constant_override("outline_size", 0)
+
+
 func _on_say(speaker: String, text: String, _expr: String) -> void:
 	_status.text = "点击画面继续"
 	_status.add_theme_color_override("font_color", EdTheme.TEXT_FAINT)
-	_dlg_box.visible = true
-	_dlg_name.text = speaker
-	_dlg_name.visible = not speaker.is_empty()
-	# 剥掉节奏标记（`[wait=0.7]` / `[speed=3]`）—— 那些是给打字机用的，
-	# 预览里没有打字机，留着会原样显示成方括号。文字特效（`[bounce]` 等）保留，
-	# 由 `_dlg_text.custom_effects` 渲染成真效果。
-	_dlg_text.text = TypingTimeline.strip(text)
+	_show_dialogue(speaker, text)
 
 
 ## 编辑器里不跑小游戏 —— 直接按「成功」提交，让剧情继续往下走。
@@ -636,10 +709,7 @@ func _apply_follow(st: Dictionary, no: int) -> void:
 	# 光标那一行本身是对白的话，把对话框也摆出来 —— 否则「跟随」只跟了一半
 	var line := _ed.doc.line_at(no) as LineIndex.Line
 	if line != null and line.is_say():
-		_dlg_name.text = line.speaker
-		_dlg_name.visible = not line.speaker.is_empty()
-		_dlg_text.text = TypingTimeline.strip(line.text)
-		_dlg_box.visible = true
+		_show_dialogue(line.speaker, line.text)
 	else:
 		_dlg_box.visible = false
 	_choice_wrap.visible = false

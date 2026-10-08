@@ -310,15 +310,56 @@ func set_dialogue_text(no: int, new_text: String) -> bool:
 
 
 ## 改对白的说话人（保留文本与表情）
+## 改对白的说话人（保留文本与表情）。
+##
+## ⚠️ **旁白行（`narr 文本`）也要能改。** 它在 GVS 里是一条指令而不是对白行，
+## 但界面上它就是「说话人 = （旁白）」的一行。以前这里 `kind != DIALOGUE`
+## 就 `return false` —— 于是「旁白行改说话人点了没反应」，而新建的行是
+## `角色: 台词`（DIALOGUE）所以能改，表现就是「有的行行、有的行不行」（用户报的）。
+##
+## 两个方向都要转：
+##   旁白 → 角色：`narr 文本`   → `alice: 文本`
+##   角色 → 旁白：`alice: 文本` → `narr 文本`
 func set_dialogue_speaker(no: int, new_speaker: String) -> bool:
 	var line := line_at(no)
-	if line == null or line.kind != LineIndex.Line.DIALOGUE:
+	if line == null:
 		return false
 	var raw := line.raw
+	var indent := _leading_space(raw)
+
+	# 旁白行 → 只有「改成某个角色」才有意义（改成空还是旁白）
+	if line.is_say() and line.kind == LineIndex.Line.DIRECTIVE:
+		if new_speaker.is_empty():
+			return false
+		var body := _say_body(raw, line)
+		# 冒号后补一个空格（`alice:文本` 不好看，也和新建行的写法不一致）。
+		# 原文自己已经有空格就沿用，别叠成两个。
+		if not body.begins_with(" "):
+			body = " " + body
+		return set_raw(no, "%s%s:%s" % [indent, new_speaker, body])
+
+	if line.kind != LineIndex.Line.DIALOGUE:
+		return false
+
+	# 说话人清空 = 变回旁白行。写法统一成 `narr`（`narration` 是别名）。
+	if new_speaker.is_empty():
+		return set_raw(no, "%snarr %s" % [indent, _say_body(raw, line).lstrip(" ")])
+
 	var colon := raw.find(":")
 	var expr_part := ("@" + line.expr) if not line.expr.is_empty() else ""
-	var body := raw.substr(colon + 1) if colon > 0 else " " + line.text
-	return set_raw(no, "%s%s%s:%s" % [_leading_space(raw), new_speaker, expr_part, body])
+	return set_raw(no, "%s%s%s:%s" % [indent, new_speaker, expr_part, _say_body(raw, line)])
+
+
+## 对白 / 旁白行的「正文部分」**原文**。
+##
+## ⚠️ 不能用 `line.text` —— 那是剥掉行尾注释之后的文本，
+## 拿它拼回去会把 `alice: 文本  # 备注` 里的备注弄丢。
+static func _say_body(raw: String, line: LineIndex.Line) -> String:
+	if line.kind == LineIndex.Line.DIRECTIVE:
+		var sp := raw.find(" ")
+		return raw.substr(sp + 1) if sp >= 0 else ""
+	var colon := raw.find(":")
+	return raw.substr(colon + 1) if colon > 0 else " " + line.text
 
 
 ## 改对白的表情（保留说话人与文本）
@@ -358,8 +399,19 @@ func set_directive_arg(no: int, index: int, value: String) -> bool:
 		var span := _arg_span(line.raw, index)
 		if span.x < 0:
 			return false
+		# 写空串 = **把这个位置参数去掉**（`flag f1 true` → `flag f1`，值回到默认 true）。
+		# 连同它前面的分隔空白一起删，否则会在行尾留下一个空格。
+		if value.is_empty():
+			var start := span.x
+			while start > 0 and (line.raw[start - 1] == " " or line.raw[start - 1] == "\t"):
+				start -= 1
+			return set_raw(no, line.raw.substr(0, start) + line.raw.substr(span.x + span.y))
 		return set_raw(no, line.raw.substr(0, span.x) + value
 			+ line.raw.substr(span.x + span.y))
+
+	# 清空一个**还不存在**的位置参数 = 什么都不用做（别在行尾留一个孤零零的空格）
+	if value.is_empty():
+		return false
 
 	# 位置参数不存在 → 插到第一个 kv 参数之前
 	var raw := line.raw
@@ -725,34 +777,49 @@ func line_state(no: int) -> Dictionary:
 				var entry := {"id": cid,
 					"expr": String(l.params.get("expr", "normal")),
 					"at": String(l.params.get("at", "center"))}
-				if l.params.has("x"):
-					entry["x"] = float(l.params["x"])
-				if l.params.has("y"):
-					entry["y"] = float(l.params["y"])
-				if l.params.has("scale"):
-					entry["scale"] = float(l.params["scale"])
+				for axis in ["x", "y", "scale"]:
+					if l.params.has(axis):
+						entry[axis] = float(l.params[axis])
 				_upsert_char(state["chars"], entry)
+				# ⚠️ **`show` 的语义是「重新定位」：没给的轴回到默认。**
+				# 而 `_upsert_char` 只覆盖、**不删除** —— 不显式清掉行里没给的坐标，
+				# `show alice x=460 y=1600` 之后再 `show alice at=left`，
+				# 预览里 alice 还停在 460（游戏里是对的，`Stage.show_char` 每次重置
+				# `pos_x` / `pos_y` / `base_scale`）。用户报的「预览没显示移动后的立绘」
+				# 就是这一类：**预览的累积状态与运行时的状态机不是同一套规则**。
+				for c in state["chars"]:
+					if String((c as Dictionary).get("id", "")) != cid:
+						continue
+					for axis in ["x", "y", "scale"]:
+						if not l.params.has(axis):
+							(c as Dictionary).erase(axis)
 			"hide":
 				_remove_char(state["chars"], l.args[0] if l.args.size() > 0 else "")
 			"move":
+				# 与运行时 `Stage.move_char` 对齐 —— 三处细节，缺一处预览就与游戏不一致：
+				#   1. 槽位**两种写法都认**。编辑器「移到」下拉写出来的是 `at=right`，
+				#      以前只认位置参数（`l.args[1]`）→ **编辑器里改完位置，预览纹丝不动**
+				#      （用户报的「预览窗没有正确显示移动后的立绘」）。
+				#   2. 给了槽位就把 `x` 交还槽位（`y` 保留）—— 槽位表里只有横向比率，
+				#      不清 `x` 则 show 设的坐标盖过槽位、立绘停在原地。
+				#   3. **不凭空把角色加到台上** —— `move` 只移动已经在台上的立绘
+				#      （`Stage.move_char` 开头 `if not _chars.has(id): return`）。
+				#      加进来的话，预览会显示一个游戏里根本不存在的立绘。
 				var cid2 := l.args[0] if l.args.size() > 0 else ""
-				var found := false
+				var at2 := String(l.params.get("at", ""))
+				if at2.is_empty() and l.args.size() > 1:
+					at2 = String(l.args[1])
 				for c in state["chars"]:
-					if String((c as Dictionary).get("id", "")) == cid2:
-						if l.args.size() > 1:
-							(c as Dictionary)["at"] = l.args[1]
-						if l.params.has("x"):
-							(c as Dictionary)["x"] = float(l.params["x"])
-						if l.params.has("y"):
-							(c as Dictionary)["y"] = float(l.params["y"])
-						if l.params.has("scale"):
-							(c as Dictionary)["scale"] = float(l.params["scale"])
-						found = true
-				if not found and not cid2.is_empty():
-					var e2 := {"id": cid2,
-						"expr": "normal",
-						"at": l.args[1] if l.args.size() > 1 else "center"}
-					_upsert_char(state["chars"], e2)
+					if String((c as Dictionary).get("id", "")) != cid2:
+						continue
+					var e: Dictionary = c
+					if not at2.is_empty():
+						e["at"] = at2
+						if not l.params.has("x"):
+							e.erase("x")
+					for axis in ["x", "y", "scale"]:
+						if l.params.has(axis):
+							e[axis] = float(l.params[axis])
 			"expr":
 				var cid3 := l.args[0] if l.args.size() > 0 else ""
 				for c in state["chars"]:

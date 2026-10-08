@@ -35,6 +35,23 @@ const STOP_TAGS := ["stop", "click"]
 ## 会被剥离、作为「音频效果器触发点」的标记
 const FX_TAGS := ["fx"]
 
+## 会被剥离、**只影响版式**的标记（不参与时间轴）
+##
+##   [center] / [mid]   这一句摆到画面中间显示（居中旁白）
+##
+## 版式标记与「什么时候显示第几个字」无关，所以不进时间轴 —— 它只是
+## 告诉对话框这一句该怎么摆。但**必须和其他标记一样剥离**：
+## 留在 `display` 里的话，RichTextLabel 会把 `[center]` 连方括号一起显示出来。
+##
+## 别名 → 规范名。允许几种写法，但内部只认一个名字 ——
+## 否则编辑器、预览、对话框三处各认一套，迟早对不上。
+const LAYOUT_ALIASES := {"center": "center", "mid": "center"}
+## 版式清单：规范名 → 界面文案。**编辑器的「版式」下拉直接用这一份**，
+## 以后加新版式（右上角小字、底部留白…）只改这里。
+const LAYOUT_LABELS := {"center": "居中"}
+## 常用简写
+const LAYOUT_CENTER := "center"
+
 ## 单个字符的最长等待，防止 [speed=0.01] 之类把节奏拖死
 const MAX_SECONDS_PER_CHAR := 0.35
 
@@ -49,11 +66,13 @@ const FX_DEFAULT_BUS := "bgm"
 ##   times   —— 每个可见字符的显示时刻（秒），升序
 ##   stops   —— 停顿点 [{index: 可见字符数, gate: 是否需点击}]，按 index 升序
 ##   events  —— 效果器触发点 [{index, kind, bus, duration, strength, pitch}]
+##   layout  —— 版式（"" = 常规对话框 / "center" = 居中旁白）
 static func build(text: String, chars_per_second: float) -> Dictionary:
 	var display := ""
 	var times := PackedFloat64Array()
 	var stops: Array = []
 	var events: Array = []
+	var layout := ""
 	var speeds: Array = [1.0]
 	var clock := 0.0
 	var base := maxf(1.0, chars_per_second)
@@ -95,6 +114,14 @@ static func build(text: String, chars_per_second: float) -> Dictionary:
 					index = close + 1
 					continue
 
+				# 版式标记（[center]）：只剥离，记下这一句要居中显示。
+				# 闭合写法（[/center]）也一并剥离 —— 它没有区间语义。
+				if LAYOUT_ALIASES.has(name):
+					if not closing:
+						layout = String(LAYOUT_ALIASES[name])
+					index = close + 1
+					continue
+
 				# 渲染用的标记（[shake] / [color=…] …）：原样保留
 				display += text.substr(index, close - index + 1)
 				index = close + 1
@@ -107,7 +134,8 @@ static func build(text: String, chars_per_second: float) -> Dictionary:
 		visible += 1
 		index += 1
 
-	return {"display": display, "times": times, "stops": stops, "events": events}
+	return {"display": display, "times": times, "stops": stops, "events": events,
+		"layout": layout}
 
 
 ## 只剥离标记，不要时间轴。
@@ -117,6 +145,67 @@ static func build(text: String, chars_per_second: float) -> Dictionary:
 ## 非节奏标记（[bounce] / [color=…] 这些）照旧保留，交给 RichTextLabel 渲染。
 static func strip(text: String) -> String:
 	return String(build(text, 1.0).get("display", text))
+
+
+# ---------------------------------------------------------------------------
+# 版式标记的读写（编辑器要用）
+#
+# 版式**不是对白行的参数**，而是文本里的一个标记 —— 所以编辑器要做成下拉，
+# 就得能从文本里读出它、再写回去。这三个函数就是那个桥。
+# ---------------------------------------------------------------------------
+
+## 这一句用的是哪个版式（"" = 常规对话框）。
+##
+## 与 `build()` 用同一张别名表和同一个 `_tag_name`，所以两边不会各认一套。
+## 这里**不建时间轴** —— 剧本块要给几百行都算一次，能省则省。
+static func layout_of(text: String) -> String:
+	var index := 0
+	var length := text.length()
+	while index < length:
+		var open := text.find("[", index)
+		if open < 0:
+			break
+		var close := text.find("]", open)
+		if close < 0:
+			break
+		var name := _tag_name(text.substr(open + 1, close - open - 1))
+		if LAYOUT_ALIASES.has(name):
+			return String(LAYOUT_ALIASES[name])
+		index = close + 1
+	return ""
+
+
+## 去掉全部版式标记，其余一字不动（含其它 `[...]` 标记与正文）。
+static func strip_layout(text: String) -> String:
+	return with_layout(text, "")
+
+
+## 把版式标记写到句首；`layout` 为空 = 去掉标记。
+##
+## 写法统一成 `[center]` 放最前面 —— 认别名，但**只写一种形式**，
+## 免得同一个意思在剧本里出现三种拼法。重复调用是幂等的。
+static func with_layout(text: String, layout: String) -> String:
+	var out := ""
+	var index := 0
+	var length := text.length()
+	while index < length:
+		var open := text.find("[", index)
+		if open < 0:
+			out += text.substr(index)
+			break
+		var close := text.find("]", open)
+		if close < 0:
+			out += text.substr(index)
+			break
+		var name := _tag_name(text.substr(open + 1, close - open - 1))
+		if LAYOUT_ALIASES.has(name):
+			out += text.substr(index, open - index)     # 只丢标记本身
+		else:
+			out += text.substr(index, close - index + 1)
+		index = close + 1
+	if not LAYOUT_LABELS.has(layout):
+		return out
+	return "[%s]%s" % [layout, out]
 
 
 ## 整段打完需要的总时长（秒）

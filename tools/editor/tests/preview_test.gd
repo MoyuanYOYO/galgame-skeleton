@@ -27,6 +27,26 @@ func _ready() -> void:
 		_finish()
 		return
 
+	# --- 居中旁白在预览里也要换版式 ---
+	# 位置 / 字色 / 描边**直接读游戏主题的 narration 段** ——
+	# 预览的 SubViewport 就是 1920×1080，所以作者看到的位置就是游戏里的位置。
+	_pv._show_dialogue("", "[center]（居中的旁白。）")
+	_ok(_pv._dlg_centered, "带 [center] 的台词在预览里切到居中版式")
+	_ok(_pv._dlg_text.text == "（居中的旁白。）",
+		"预览也剥掉了 [center]（实得「%s」）" % _pv._dlg_text.text)
+	_ok(_pv._dlg_text.horizontal_alignment == HORIZONTAL_ALIGNMENT_CENTER,
+		"预览里文字水平居中")
+	_ok(_pv._dlg_text.get_theme_constant("outline_size") > 0,
+		"预览里也带描边（没有底板垫着）")
+	_ok(is_equal_approx(_pv._dlg_box.anchor_top, 0.0),
+		"预览里框铺满全屏（anchor_top %.1f）" % _pv._dlg_box.anchor_top)
+	_pv._show_dialogue("", "普通旁白。")
+	_ok(not _pv._dlg_centered, "下一句普通旁白切回常规版式")
+	_ok(is_equal_approx(_pv._dlg_box.anchor_top, 1.0),
+		"预览里框回到贴底（anchor_top %.1f）" % _pv._dlg_box.anchor_top)
+	_ok(_pv._dlg_text.text == "普通旁白。", "常规版式下文本照常显示")
+	_pv._dlg_box.visible = false
+
 	_ed.goto_source(15)          # label start
 	await _wait(0.3)
 	_pv.run_from(15)
@@ -88,6 +108,37 @@ func _ready() -> void:
 	_ok(stuck_at.is_empty(), "预览不会卡在某个等待态（卡在 %s）" % stuck_at)
 	_ok(not _pv.is_running(), "预览最终跑到了结束")
 
+	# --- 「从此处预览」要显示**移动后**的立绘 ---
+	#
+	# `run_from(no)` 先 `_restore_stage(line_state(no - 1))` 把累积画面摆好，
+	# 再从那行开始跑。所以 `line_state` 与运行时的状态机必须给出同样的结果 ——
+	# 不一致就会出现「点预览，预览窗里立绘还在原地」（用户报的）。
+	# ⚠️ 编辑器「移到」下拉写出来的是 `at=right`，而 `line_state` 以前只认
+	# 位置参数形式，于是编辑器里怎么改都看不到效果。
+	var tmp := "user://__preview_move.gvs"
+	_write(tmp, "\n".join([
+		"label start",
+		"bg classroom fade=0.0",
+		"show alice at=left fade=0.0",
+		"move alice at=right duration=0.0",
+		"narr 测试。",
+		"",
+	]))
+	_ed._open(tmp)
+	await _wait(0.6)
+	var stage: Stage = _pv._stage
+	_pv.run_from(5)              # 第 5 行是台词 → 累积状态含第 4 行的 move
+	await _wait(0.8)
+	var ratios: Dictionary = Stage.POSITION_RATIOS
+	var right_x := 1920.0 * float(ratios["right"]) - Stage.CHAR_WIDTH * 0.5
+	var left_x := 1920.0 * float(ratios["left"]) - Stage.CHAR_WIDTH * 0.5
+	var pos := stage.get_char_position("alice")
+	_ok(absf(pos.x - right_x) < 2.0,
+		"预览里立绘在 right 槽位（x=%.0f，期望 %.0f）" % [pos.x, right_x])
+	_ok(absf(pos.x - left_x) > 100.0,
+		"而不是停在 left 槽位（left 是 %.0f）" % left_x)
+	DirAccess.remove_absolute(ProjectSettings.globalize_path(tmp))
+
 	_finish()
 
 
@@ -108,6 +159,12 @@ func _ok(cond: bool, msg: String) -> void:
 	else:
 		_fail += 1
 		print("  FAIL  %s" % msg)
+
+
+func _write(path: String, text: String) -> void:
+	var f := FileAccess.open(path, FileAccess.WRITE)
+	f.store_string(text)
+	f.close()
 
 
 func _wait(sec: float) -> void:
