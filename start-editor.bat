@@ -5,7 +5,7 @@ cd /d "%~dp0"
 rem === GVS editor launcher ===
 rem If Godot lives somewhere else, fix the GODOT path below.
 
-set "GODOT=D:\Tools\Godot\Godot_v4.7.2-stable_win64.exe"
+set "GODOT=C:\Godot\Godot_v4.7.2-stable_win64.exe"
 
 if not exist "project.godot" (
   echo [ERROR] project.godot not found in this folder.

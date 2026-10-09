@@ -5,6 +5,8 @@ Godot 4 视觉小说（galgame）工程骨架。引擎、系统、演出、存�
 
 - 详细设计：[`DESIGN.md`](DESIGN.md)
 - 剧本语言规格：[`DESIGN.md` 第四节](DESIGN.md#四剧本语言-gvs-规格)
+- 素材来源与授权：[`assets/ATTRIBUTIONS.md`](assets/ATTRIBUTIONS.md)
+- 许可证：[MIT](LICENSE)
 
 ---
 
@@ -17,7 +19,7 @@ Godot 4 视觉小说（galgame）工程骨架。引擎、系统、演出、存�
 命令行运行：
 
 ```bash
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path "D:/Work/WorkBuddy AI/galgame"
+godot --path .
 ```
 
 ---
@@ -857,7 +859,7 @@ move bob   at=right y=1130                        # 槽位 + 纵向一起复位
 调坐标不用靠猜 —— 跑一次网格预览工具，出图上有 100px 网格与坐标刻度：
 
 ```bash
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/stage_grid.tscn
+godot --path . res://tools/stage_grid.tscn
 ```
 
 输出在 `%APPDATA%/Godot/app_userdata/Galgame Skeleton/captures/stage_grid.png`，
@@ -1205,7 +1207,7 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 ### 剧本静态校验
 
 ```bash
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/audit.tscn
+godot --headless --path . res://tools/audit.tscn
 ```
 
 一次扫出：解析错误、悬空跳转、**重复结局 id**、未登记结局、空台词、空选项块、未使用标签。
@@ -1270,24 +1272,24 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 
 ```bash
 # 回归测试 · headless（990 项断言，快，适合 CI）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/smoke.tscn
+godot --headless --path . res://tools/smoke.tscn
 
 # 回归测试 · 窗口模式（995 项，多覆盖「真实输入模拟」一节）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/smoke.tscn
+godot --path . res://tools/smoke.tscn
 
 # 编辑器：OpSpec ↔ 解析器一致性守卫（headless）
 # 「编辑器能写、解析器不读」这类静默失效就是它抓的（`move at=` 曾经被静默丢掉）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/editor/tests/op_spec_test.tscn
+godot --headless --path . res://tools/editor/tests/op_spec_test.tscn
 
 # 编辑器：立绘位置「自定义」下拉的端到端验收（要窗口）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/editor/tests/pos_custom_test.tscn
+godot --path . res://tools/editor/tests/pos_custom_test.tscn
 
 # 自动截图：依次驱动全部界面并各存一张 PNG（共 14 张）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/capture.tscn
+godot --path . res://tools/capture.tscn
 
 # 多周目界面验收：造一个「第 2 周目 + 通关 3 次」的现场，断言标题与记录面板显示出来了
 # （headless 只跑断言，窗口模式另外出两张图）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/cycle_demo.tscn
+godot --headless --path . res://tools/cycle_demo.tscn
 ```
 
 截图输出在 `%APPDATA%/Godot/app_userdata/Galgame Skeleton/captures/`。
@@ -1319,33 +1321,33 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 ```bash
 # 立绘材质的 modulate 语义对照表（无材质 / 只看贴图 / 叠两遍 / vertex varying）：
 # 能抓出「一挂材质就变暗」和「一挂材质就不受 modulate 控制（不再被压暗）」两种坏写法
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/char_shader_probe.tscn
+godot --path . res://tools/char_shader_probe.tscn
 
 # 逐句核对「说话人亮 / 听者真的暗了」（渲染色，不是属性）——压暗失效这类 bug 只有它抓得到
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/dim_probe.tscn
+godot --path . res://tools/dim_probe.tscn
 
 # 转场遮罩：progress 0/0.5/1 × 四种模式的渲染色保真度（自带「坏写法必须能量出变暗」的自检）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/mask_fidelity_probe.tscn
+godot --path . res://tools/mask_fidelity_probe.tscn
 
 # 端到端验收：面板外的压暗程度 + 四种转场中途的保真度
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/fix_verify.tscn
+godot --path . res://tools/fix_verify.tscn
 
 # 生成「修复前/修复后」对比截图（存到 user://）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/fix_compare.tscn
+godot --path . res://tools/fix_compare.tscn
 
 # 媒体能力实测：动图格式能不能直接播、两条动画路线并排对比、AnimatedTexture 当采样器
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/anim_probe.tscn
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/anim_route_probe.tscn
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/anim_sampler_probe.tscn
+godot --path . res://tools/anim_probe.tscn
+godot --path . res://tools/anim_route_probe.tscn
+godot --path . res://tools/anim_sampler_probe.tscn
 
 # 视频 / 动态立绘的端到端验收（图层映射、缺失素材不卡死、动态立绘渲染 + 表情过渡）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/media_verify.tscn
+godot --path . res://tools/media_verify.tscn
 
 # 真机播 .ogv（画面推进 / 位置尺寸 / 有没有 alpha / finished / wait 阻塞）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/video_verify.tscn
+godot --path . res://tools/video_verify.tscn
 
 # 引擎能力清单（有哪些类、认哪些后缀）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/capability_probe.tscn
+godot --headless --path . res://tools/capability_probe.tscn
 ```
 
 音频行为这类「属性看不出对错」的毛病，也有专门的探针 ——
@@ -1359,10 +1361,10 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 #   · 切流后引擎补报一次 finished → 列表循环连跳两首
 #   · 在 finished 回调里同步换流 → WAV 那首起不来
 #   · WAV 的循环区间是空的 → 开了循环反而放不出来
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/music_probe.tscn
+godot --path . res://tools/music_probe.tscn
 
 # 功能窗口尺寸对账：各面板矩形是否与整图贴图逐像素相等（整图模式差一个像素就静默拉伸）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/panel_probe.tscn
+godot --path . res://tools/panel_probe.tscn
 ```
 
 > 这两个探针都会写 `user://` 真实数据（`music_probe` 解锁收藏、`panel_probe` 写存档槽 1），
@@ -1410,7 +1412,7 @@ zoom alice 1.3 duration=0.5 ease=out_back     # 弹一下放大
 ### 启动
 
 ```bash
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/editor/editor.tscn
+godot --path . res://tools/editor/editor.tscn
 ```
 
 ### 界面

@@ -3,13 +3,16 @@
 本工程的素材分两类：**AI 生成的美术** 与 **CC0 公共领域的音频**。
 两类都不要求署名，这里记录来源是为了日后可追溯、也方便替换。
 
+> 下文提到的构建脚本、原始生成图与候选风格目录（如 `galgame-ui-styles/`）
+> 位于开发者的本地工作目录，**未随本仓库分发**；路径仅用于记录来源。
+
 ---
 
 ## 一、美术素材（背景 / 立绘 / CG）
 
 全部由 AI 生成，**无第三方版权**，可自由使用与修改。
 
-生成后经过统一后处理（见 `.workbuddy/tmp/process_assets.py`）：
+生成后经过统一后处理（见 `process_assets.py`）：
 
 - 背景 / CG：原图 1536×1024 → 裁掉底部 160px → 缩放为 1920×1080
   （裁掉的底部正好是生成平台的水印区，一举两得）
@@ -38,7 +41,7 @@
 ## 二、UI 素材（按钮 / 面板 / 对话框）— v5 樱花和纸套件
 
 当前 UI（v5，浅色「樱花和纸」主题）由 **AI 生成底纹 + 程序绘制几何** 合成，
-无第三方版权，可自由使用与修改。处理脚本 `.workbuddy/tmp/build_ui_sakura_washi.py`。
+无第三方版权，可自由使用与修改。处理脚本 `build_ui_sakura_washi.py`。
 
 | 文件 | 质感来源 | 几何 |
 | --- | --- | --- |
@@ -78,9 +81,9 @@
 
 | 生成素材 | 用途 |
 | --- | --- |
-| `.workbuddy/tmp/gen_washi/Seamless_tileable_washi_*.png` | 和纸纸纹 |
-| `.workbuddy/tmp/gen_washi/Seamless_tileable_pattern_of_s_*.png` | 樱花瓣图案 |
-| `.workbuddy/tmp/gen/A_single_delicate_corner_ornam_*.png` | 樱花藤蔓角饰线稿（v4 起沿用） |
+| `gen_washi/Seamless_tileable_washi_*.png` | 和纸纸纹 |
+| `gen_washi/Seamless_tileable_pattern_of_s_*.png` | 樱花瓣图案 |
+| `gen/A_single_delicate_corner_ornam_*.png` | 樱花藤蔓角饰线稿（v4 起沿用） |
 
 ### 关键做法（换风格时照抄）
 

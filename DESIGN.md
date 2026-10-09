@@ -2372,29 +2372,29 @@ Main (Control)
 
 ```bash
 # 回归测试 · headless（827 项断言，快，适合 CI）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/smoke.tscn
+godot --headless --path . res://tools/smoke.tscn
 
 # 回归测试 · 窗口模式（832 项，多覆盖「真实输入模拟」一节）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/smoke.tscn
+godot --path . res://tools/smoke.tscn
 
 # 自动截图（窗口模式，14 张）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/capture.tscn
+godot --path . res://tools/capture.tscn
 
 # 多周目界面验收（造「第 2 周目 + 通关 3 次」的现场，验标题与记录面板的显示；
 # headless 只跑断言，窗口模式另外出两张图）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --headless --path . res://tools/cycle_demo.tscn
+godot --headless --path . res://tools/cycle_demo.tscn
 
 # 立绘坐标网格预览（窗口模式，调 x= / y= / scale= 时用它，附实测坐标输出）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/stage_grid.tscn
+godot --path . res://tools/stage_grid.tscn
 
 # 按钮样式前后对比（窗口模式，出一张拼接图）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/button_compare.tscn
+godot --path . res://tools/button_compare.tscn
 
 # 文字特效多帧演示（窗口模式，出一张拼接图）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/text_fx_demo.tscn
+godot --path . res://tools/text_fx_demo.tscn
 
 # 立绘缓动位移多帧演示（帧间距能看出加速）
-"D:/Tools/Godot/Godot_v4.7.2-stable_win64_console.exe" --path . res://tools/motion_demo.tscn
+godot --path . res://tools/motion_demo.tscn
 ```
 
 冒烟测试覆盖：Autoload 注册 → 剧本解析与跳转回填 → **外观配置（配色 / 字号 / 按钮预设 / 九宫格贴图通路 / 未定义预设回退 / 文字颜色覆盖 / 按钮音效挂载与触发链路）** → **文字特效与打字节奏（时间轴编译、停顿、变速、标签剥离、边界与精度、二分查表、特效注册与时间片行为）** → **演出动效（hop / zoom / shake / screen_shake / screen_flash / screen_fx 的解析与行为、缓动生效、被打断后从基准位重启、clear 复位）** → 调度器控制流（if/else、choice、call/return、flag、affection、minigame、ending）→ 存档往返（含 JSON 整数还原）→ 立绘定位 → 序章端到端跑通并断言最终好感度为 44 → 自动播放/跳过的连续性 → 标题读档 → 「继续游戏」恢复精度 → 鉴赏系统（注册表、主题、解锁语义、落盘往返、锁图标数量、曲目高亮、可视化控件）与剧情重播（片段边界、快照还原、自动存档闸门）→ **转场遮罩与滑入滑出（四种转场模式映射、滑入起点在屏幕外、滑入时 alpha 给满、剧本 type 参数解析）** → **多立绘协同（说话人亮 / 他人压暗 / 旁白全亮）** → **玩家便利（已读追踪、跳过已读语义、已读文本变暗、存档删除与覆盖确认、存档缩略图读写与清理、隐藏 UI）** → **回滚（缓冲区边界与分支截断、快照采集、回退 / 前进、退到选项处改选、滚轮输入、设置开关）** → **音频（BGM 循环开关、语音队列的入队 / 接力 / 打断 / 缺素材跳过）** → **标记不外漏（回看 / 存档预览里不得残留 `[wait]` `[speed]`）** → **剧本路径解析（语言回退、逻辑路径不变、非剧本路径放过）** → **全屏特效（种类表与 mode 一一对应、持续 / 脉冲两种语义、层必须排在 UI 之上、BackBufferCopy 恰好在前一位、未知种类被拒且不顶掉当前特效、模态面板自动压下、四个复位点、回滚能还原）** → **着色器静态检查（入口函数不得出现 return）** → **架构守卫（分层规则 + 守卫自检）** → **真实输入模拟** → **指令端到端覆盖（每条指令都真的经调度器跑一遍）**。
