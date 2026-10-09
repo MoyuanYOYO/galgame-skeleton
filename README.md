@@ -3,6 +3,31 @@
 Godot 4 视觉小说（galgame）工程骨架。引擎、系统、演出、存档、工具链全部做完，
 **零素材、零配置即可运行**——直接打开工程按 F5 就能走完序章到结局的完整流程。
 
+## 自带可视化剧本编辑器
+
+这不只是一套运行时框架，还带一个**完整的图形化编辑器**（`tools/editor/`），
+覆盖**素材 / 剧本 / 演出 / 翻译**四块。写剧本不用手改文本，也不用
+「改一行 → 重启 → 从头点到那一句」。
+
+```bash
+godot --path . res://tools/editor/editor.tscn    # 或双击 start-editor.bat
+```
+
+| | |
+|:---:|:---:|
+| ![剧本块](docs/screenshots/editor_02_table.png) | ![分支图](docs/screenshots/editor_03_graph.png) |
+| **剧本块** —— 表格化改剧本，逐字节保真写回，右侧实时预览 | **分支图** —— 分层有向图，标出死路与孤儿标签，点节点跳源码 |
+
+- **六个页面**：源码 · 剧本块 · 分支图 · 素材 · 搜索 · 翻译
+- **改完立刻看见**：改一行，右侧预览马上更新（含立绘位置 / 表情 / CG / 背景）
+- **变量清单**：揪出「只读不写」（名字拼错 → 那条分支永远走不到）与「只写不读」
+- **与 AI 协作**：每 500ms 监听磁盘变化，外部改动自动同步进编辑器
+- **不污染游戏**：跑 `main.tscn` 时完全不加载它，导出时排除 `tools/editor/` 即可
+
+> 完整说明见 [可视化编辑器](#可视化编辑器) 一节（界面、快捷键、素材页、保真保证、自带测试）。
+
+---
+
 - 详细设计：[`DESIGN.md`](DESIGN.md)
 - 剧本语言规格：[`DESIGN.md` 第四节](DESIGN.md#四剧本语言-gvs-规格)
 - 素材来源与授权：[`assets/ATTRIBUTIONS.md`](assets/ATTRIBUTIONS.md)
@@ -12,14 +37,20 @@ Godot 4 视觉小说（galgame）工程骨架。引擎、系统、演出、存�
 
 ## 快速开始
 
+**① 玩游戏**
+
 1. 打开 Godot 4.7+，`导入` → 选择本目录的 `project.godot`
 2. 按 `F5` 运行（主场景已设为 `scenes/main.tscn`）
 3. 点「开始游戏」
 
-命令行运行：
-
 ```bash
 godot --path .
+```
+
+**② 改剧本 —— 用可视化编辑器，不要手改 `.gvs`**
+
+```bash
+godot --path . res://tools/editor/editor.tscn
 ```
 
 ---
@@ -1433,6 +1464,16 @@ godot --path . res://tools/editor/editor.tscn
 | 素材 | 7 类素材浏览、缺失看板、未使用反查、缩略图、导入 / 重命名 / 删除 / 撤销 |
 | 搜索 | **跨全部剧本**搜素材 id / 台词 / 指令，列出命中并跳转（`Ctrl+Shift+F`） |
 | 翻译 | 界面文案漏翻检测、剧本台词清单、译文直接编辑并写回 json |
+
+各页面实际样子（深色 IDE 主题）：
+
+| 源码 | 剧本块 | 分支图 |
+|:---:|:---:|:---:|
+| ![源码](docs/screenshots/editor_01_source.png) | ![剧本块](docs/screenshots/editor_02_table.png) | ![分支图](docs/screenshots/editor_03_graph.png) |
+
+| 素材 | 翻译 | 实时预览 |
+|:---:|:---:|:---:|
+| ![素材](docs/screenshots/editor_04_asset.png) | ![翻译](docs/screenshots/editor_05_i18n.png) | ![实时预览](docs/screenshots/editor_07_preview.png) |
 
 ### 变量清单（在左侧栏）
 
